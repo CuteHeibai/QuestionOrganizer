@@ -14,8 +14,16 @@ public sealed class AppSettings
     public string ProtectedApiKey { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string Model { get; set; } = "gpt-5.5";
+    public Dictionary<AiProviderKind, AiProviderSettings> ProviderProfiles { get; set; } = [];
     public string OutputDirectory { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "题目整理");
     public string Theme { get; set; } = "浅色";
     public string WordTemplatePath { get; set; } = string.Empty;
+}
+
+public sealed class AiProviderSettings
+{
+    public string ProtectedApiKey { get; set; } = string.Empty;
+    public string BaseUrl { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
 }

@@ -24,8 +24,10 @@ public sealed class SettingsStore
         try
         {
             await using var stream = File.OpenRead(_settingsPath);
-            return await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions)
-                ?? new AppSettings();
+            var settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions)
+                           ?? new AppSettings();
+            MigrateProviderProfile(settings);
+            return settings;
         }
         catch (JsonException)
         {
@@ -39,16 +41,39 @@ public sealed class SettingsStore
         await JsonSerializer.SerializeAsync(stream, settings, JsonOptions);
     }
 
-    public string ReadApiKey(AppSettings settings)
+    public string ReadApiKey(AppSettings settings) => ReadApiKey(settings, settings.Provider);
+
+    public string ReadApiKey(AppSettings settings, AiProviderKind provider)
     {
         try
         {
-            return WindowsDataProtector.Unprotect(settings.ProtectedApiKey);
+            var profile = settings.ProviderProfiles.TryGetValue(provider, out var savedProfile)
+                ? savedProfile
+                : null;
+            var protectedApiKey = profile?.ProtectedApiKey;
+            if (string.IsNullOrWhiteSpace(protectedApiKey) && settings.Provider == provider)
+                protectedApiKey = settings.ProtectedApiKey;
+            return WindowsDataProtector.Unprotect(protectedApiKey ?? string.Empty);
         }
         catch (Exception)
         {
             return string.Empty;
         }
     }
-}
 
+    private static void MigrateProviderProfile(AppSettings settings)
+    {
+        if (settings.ProviderProfiles.ContainsKey(settings.Provider)) return;
+        if (string.IsNullOrWhiteSpace(settings.ProtectedApiKey) &&
+            string.IsNullOrWhiteSpace(settings.BaseUrl) &&
+            string.IsNullOrWhiteSpace(settings.Model))
+            return;
+
+        settings.ProviderProfiles[settings.Provider] = new AiProviderSettings
+        {
+            ProtectedApiKey = settings.ProtectedApiKey,
+            BaseUrl = settings.BaseUrl,
+            Model = settings.Model
+        };
+    }
+}

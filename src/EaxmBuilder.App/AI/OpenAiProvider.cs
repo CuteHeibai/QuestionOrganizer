@@ -53,13 +53,13 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         return RequestJsonAsync<OcrResult>(sourcePath, prompt, cancellationToken);
     }
 
-    public Task<QuestionDocument> StructureQuestionAsync(
+    public async Task<QuestionDocument> StructureQuestionAsync(
         string sourcePath,
         OcrResult ocr,
         string additionalInstructions,
         CancellationToken cancellationToken = default)
     {
-        var prompt = $$"""
+        var prompt = $$$"""
             将下面 OCR 文本整理为结构化数学题目。对照原图修正明显识别错误，但不要求解或补写内容。
             整理目标是把这道数学题用 LaTeX 公式整理到 Word 文档中：
             正文最终排版为宋体、五号、不加粗、二倍行距、段落前后无空格。
@@ -69,13 +69,18 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             并分配 figureId（figure1 起）。题干目标图和每个图像选项必须拆成独立 Figure：
             先放题干文字，再放目标图；每个选项按 Paragraph("A.") + Figure 的形式排列。
             不要把多个选项或目标图合并为一张 SVG，必须保留题目作答所需的全部图形。
+            如果 latex 中使用了非常用、自定义或你不确定软件能否识别的 LaTeX 命令，
+            必须在顶层 latexSymbolMap 中补充该命令的显示映射，键使用带反斜杠的命令名，值使用最终应显示的 Unicode 符号或普通文字。
+            如果该命令带一个参数，值里可以用 #1 表示解析后的参数，例如 {"\\widearc":"⌒#1"}。
             figures 暂时返回空数组。仅返回符合下列形状的 JSON：
-            {"schemaVersion":"1.0","title":"","questionNumber":"","language":"zh-CN","blocks":[{"type":"Paragraph","text":"","latex":"","figureId":""}],"figures":[]}
+            {"schemaVersion":"1.0","title":"","questionNumber":"","language":"zh-CN","latexSymbolMap":{"\\custom":"显示符号"},"blocks":[{"type":"Paragraph","text":"","latex":"","figureId":""}],"figures":[]}
 
             OCR 文本：
             {{ocr.RawText}}
             """ + FormatAdditionalInstructions(additionalInstructions);
-        return RequestJsonAsync<QuestionDocument>(sourcePath, prompt, cancellationToken);
+        var document = await RequestJsonAsync<QuestionDocument>(sourcePath, prompt, cancellationToken);
+        NormalizeLatexSymbolMap(document);
+        return document;
     }
 
     public async Task<IReadOnlyList<FigureDocument>> RedrawFiguresAsync(
@@ -99,6 +104,40 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             figures.Add(await RedrawSingleFigureAsync(sourcePath, document, id, additionalInstructions, cancellationToken));
         }
         return figures;
+    }
+
+    public Task<OutputReviewResult> ReviewOutputsAsync(
+        string sourcePath,
+        QuestionDocument document,
+        IReadOnlyDictionary<string, string> generatedFiles,
+        string additionalInstructions,
+        CancellationToken cancellationToken = default)
+    {
+        var documentJson = JsonSerializer.Serialize(document, JsonOptions);
+        var generatedText = string.Join("\n\n", generatedFiles.Select(item =>
+            $"--- {item.Key} ---\n{TrimForPrompt(item.Value, 12_000)}"));
+        var prompt = $$"""
+            你是数学题目整理软件的质量检查 AI。请对照原始题目图片，检查软件生成的结构化内容和导出底稿是否有错误。
+
+            重点检查：
+            1. 题干、选项、编号、标点、数学公式是否与原图一致；
+            2. LaTeX 是否仍残留为未解析代码，或需要补充 latexSymbolMap；
+            3. 图形 SVG 是否缺失、错位、误把原图截图嵌入、文字字体不符合宋体要求；
+            4. Word/PDF/HTML/LaTeX 输出底稿是否有明显排版风险。
+
+            如果发现错误，请在 correctedDocument 中返回完整修正后的 QuestionDocument；
+            如果只需要新增符号解析，也请把 latexSymbolMap 合并到 correctedDocument。
+            不要新增题目没有的答案或解析，不要改写题意。
+            仅返回 JSON 对象，字段必须包括 passed、summary、issues、correctedDocument。
+            通过时 correctedDocument 为 null；需要修正时 correctedDocument 为完整 QuestionDocument。
+
+            当前结构化文档：
+            {{{documentJson}}}
+
+            已生成文件文本摘要：
+            {{{generatedText}}}
+            """ + FormatAdditionalInstructions(additionalInstructions);
+        return RequestJsonAsync<OutputReviewResult>(sourcePath, prompt, cancellationToken);
     }
 
     private async Task<FigureDocument> RedrawSingleFigureAsync(
@@ -160,6 +199,20 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         return $"\n\n当前项目的附加要求如下。只在不改变输出 JSON 结构的前提下执行：\n{value.Trim()}";
+    }
+
+    private static string TrimForPrompt(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength] + "\n...（已截断）";
+
+    private static void NormalizeLatexSymbolMap(QuestionDocument document)
+    {
+        if (document.LatexSymbolMap.Count == 0) return;
+        document.LatexSymbolMap = document.LatexSymbolMap
+            .Where(item => !string.IsNullOrWhiteSpace(item.Key) && !string.IsNullOrWhiteSpace(item.Value))
+            .ToDictionary(
+                item => item.Key.Trim().StartsWith('\\') ? item.Key.Trim() : "\\" + item.Key.Trim(),
+                item => item.Value.Trim(),
+                StringComparer.Ordinal);
     }
 
     private async Task<T> RequestJsonAsync<T>(

@@ -14,7 +14,12 @@ public static class HtmlRenderer
         if (TryGetPromptTargetLayout(document, out var targetFigureIndex, out var targetFigure))
         {
             body.AppendLine("<div class=\"prompt-row\"><div class=\"prompt-text\">");
-            AppendInlineParagraphs(body, document.Blocks.Take(targetFigureIndex).ToList(), document.QuestionNumber, ref numberPlaced);
+            AppendInlineParagraphs(
+                body,
+                document.Blocks.Take(targetFigureIndex).ToList(),
+                document.QuestionNumber,
+                document.LatexSymbolMap,
+                ref numberPlaced);
             body.AppendLine("</div><div class=\"target-figure\">");
             body.AppendLine(SanitizeSvg(targetFigure.Svg));
             body.AppendLine("</div></div>");
@@ -56,7 +61,12 @@ public static class HtmlRenderer
                         index++;
                     }
                     index--;
-                    AppendInlineParagraph(body, inlineBlocks, document.QuestionNumber, ref numberPlaced);
+                    AppendInlineParagraph(
+                        body,
+                        inlineBlocks,
+                        document.QuestionNumber,
+                        document.LatexSymbolMap,
+                        ref numberPlaced);
                     break;
                 case QuestionBlockType.Figure:
                     var figure = document.Figures.FirstOrDefault(item => item.Id == block.FigureId);
@@ -85,6 +95,7 @@ public static class HtmlRenderer
         StringBuilder body,
         IReadOnlyList<QuestionBlock> blocks,
         string questionNumber,
+        IReadOnlyDictionary<string, string> latexSymbolMap,
         ref bool numberPlaced)
     {
         for (var index = 0; index < blocks.Count; index++)
@@ -99,7 +110,7 @@ public static class HtmlRenderer
                 index++;
             }
             index--;
-            AppendInlineParagraph(body, inlineBlocks, questionNumber, ref numberPlaced);
+            AppendInlineParagraph(body, inlineBlocks, questionNumber, latexSymbolMap, ref numberPlaced);
         }
     }
 
@@ -107,6 +118,7 @@ public static class HtmlRenderer
         StringBuilder body,
         IReadOnlyList<QuestionBlock> blocks,
         string questionNumber,
+        IReadOnlyDictionary<string, string> latexSymbolMap,
         ref bool numberPlaced)
     {
         if (blocks.Count == 0) return;
@@ -116,7 +128,7 @@ public static class HtmlRenderer
             if (block.Type == QuestionBlockType.Formula)
             {
                 body.Append("<span class=\"formula\">")
-                    .Append(WebUtility.HtmlEncode(MathTextFormatter.ToDisplayText(block.Latex)))
+                    .Append(WebUtility.HtmlEncode(MathTextFormatter.ToDisplayText(block.Latex, latexSymbolMap)))
                     .Append("</span>");
                 continue;
             }

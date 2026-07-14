@@ -16,6 +16,7 @@ public sealed class QuestionDocument
     public string Title { get; set; } = string.Empty;
     public string QuestionNumber { get; set; } = string.Empty;
     public string Language { get; set; } = "zh-CN";
+    public Dictionary<string, string> LatexSymbolMap { get; set; } = [];
     public List<QuestionBlock> Blocks { get; set; } = [];
     public List<FigureDocument> Figures { get; set; } = [];
 }
@@ -41,3 +42,10 @@ public sealed class OcrResult
     public string Language { get; set; } = "zh-CN";
 }
 
+public sealed class OutputReviewResult
+{
+    public bool Passed { get; set; } = true;
+    public string Summary { get; set; } = string.Empty;
+    public List<string> Issues { get; set; } = [];
+    public QuestionDocument? CorrectedDocument { get; set; }
+}

@@ -19,4 +19,10 @@ public interface IAiProvider
         QuestionDocument document,
         string additionalInstructions,
         CancellationToken cancellationToken = default);
+    Task<OutputReviewResult> ReviewOutputsAsync(
+        string sourcePath,
+        QuestionDocument document,
+        IReadOnlyDictionary<string, string> generatedFiles,
+        string additionalInstructions,
+        CancellationToken cancellationToken = default);
 }

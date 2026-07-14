@@ -55,6 +55,7 @@ public sealed class ProjectRepository
                 if (project is not null)
                 {
                     project.DirectoryPath = Path.GetDirectoryName(path)!;
+                    EnsureAllSteps(project);
                     foreach (var record in project.Steps.Values.Where(item => item.State == StepState.Running))
                     {
                         record.State = StepState.Failed;
@@ -102,5 +103,13 @@ public sealed class ProjectRepository
     {
         var invalid = Path.GetInvalidFileNameChars();
         return new string(value.Where(character => !invalid.Contains(character)).ToArray()).Trim();
+    }
+
+    private static void EnsureAllSteps(QuestionProject project)
+    {
+        foreach (var step in Enum.GetValues<TaskStep>())
+        {
+            project.Steps.TryAdd(step, new StepRecord());
+        }
     }
 }

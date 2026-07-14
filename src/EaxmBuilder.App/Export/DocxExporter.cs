@@ -270,7 +270,11 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
             var promptBlocks = document.Blocks.Take(targetFigureIndex).ToList();
             if (promptBlocks.Count > 0)
             {
-                body.Add(CreatePromptTargetTable(promptBlocks, document.QuestionNumber, targetAsset));
+                body.Add(CreatePromptTargetTable(
+                    promptBlocks,
+                    document.QuestionNumber,
+                    targetAsset,
+                    document.LatexSymbolMap));
                 numberPlaced = true;
                 startIndex = targetFigureIndex + 1;
             }
@@ -309,7 +313,11 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                         index++;
                     }
                     index--;
-                    body.Add(CreateInlineParagraph(inlineBlocks, document.QuestionNumber, ref numberPlaced));
+                    body.Add(CreateInlineParagraph(
+                        inlineBlocks,
+                        document.QuestionNumber,
+                        document.LatexSymbolMap,
+                        ref numberPlaced));
                     break;
                 case QuestionBlockType.Figure:
                     if (!assets.TryGetValue(block.FigureId, out var asset))
@@ -349,7 +357,8 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
     private static XElement CreatePromptTargetTable(
         IReadOnlyList<QuestionBlock> promptBlocks,
         string questionNumber,
-        FigureAsset targetAsset)
+        FigureAsset targetAsset,
+        IReadOnlyDictionary<string, string> latexSymbolMap)
     {
         const int totalWidth = 8640;
         const int promptWidth = 5940;
@@ -359,7 +368,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 new XElement(W + "tcW", new XAttribute(W + "w", promptWidth), new XAttribute(W + "type", "dxa")),
                 new XElement(W + "vAlign", new XAttribute(W + "val", "center"))));
         var numberPlaced = false;
-        AddInlineParagraphs(leftCell, promptBlocks, questionNumber, ref numberPlaced);
+        AddInlineParagraphs(leftCell, promptBlocks, questionNumber, latexSymbolMap, ref numberPlaced);
 
         var rightCell = new XElement(W + "tc",
             new XElement(W + "tcPr",
@@ -451,13 +460,14 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         new(W + "p", ParagraphProperties(),
             CreateTextRun(text));
 
-    private static XElement CreateFormula(string latex) =>
-        new(W + "p", ParagraphProperties(), CreateMathRun(latex));
+    private static XElement CreateFormula(string latex, IReadOnlyDictionary<string, string> latexSymbolMap) =>
+        new(W + "p", ParagraphProperties(), CreateMathRun(latex, latexSymbolMap));
 
     private static void AddInlineParagraphs(
         XElement parent,
         IReadOnlyList<QuestionBlock> blocks,
         string questionNumber,
+        IReadOnlyDictionary<string, string> latexSymbolMap,
         ref bool numberPlaced)
     {
         for (var index = 0; index < blocks.Count; index++)
@@ -472,13 +482,14 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 index++;
             }
             index--;
-            parent.Add(CreateInlineParagraph(inlineBlocks, questionNumber, ref numberPlaced));
+            parent.Add(CreateInlineParagraph(inlineBlocks, questionNumber, latexSymbolMap, ref numberPlaced));
         }
     }
 
     private static XElement CreateInlineParagraph(
         IReadOnlyList<QuestionBlock> blocks,
         string questionNumber,
+        IReadOnlyDictionary<string, string> latexSymbolMap,
         ref bool numberPlaced)
     {
         var paragraph = new XElement(W + "p", ParagraphProperties());
@@ -486,7 +497,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         {
             if (block.Type == QuestionBlockType.Formula)
             {
-                paragraph.Add(CreateMathRun(block.Latex));
+                paragraph.Add(CreateMathRun(block.Latex, latexSymbolMap));
                 continue;
             }
 
@@ -506,13 +517,13 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         new(W + "r", RunProperties(),
             new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), text));
 
-    private static XElement CreateMathRun(string latex) =>
+    private static XElement CreateMathRun(string latex, IReadOnlyDictionary<string, string> latexSymbolMap) =>
         new(M + "oMath",
             new XElement(M + "r",
                 new XElement(M + "rPr", new XElement(M + "sty", new XAttribute(M + "val", "p"))),
                 new XElement(M + "t",
                     new XAttribute(XNamespace.Xml + "space", "preserve"),
-                    MathTextFormatter.ToDisplayText(latex))));
+                    MathTextFormatter.ToDisplayText(latex, latexSymbolMap))));
 
     private static bool StartsNewParagraph(QuestionBlock block)
     {

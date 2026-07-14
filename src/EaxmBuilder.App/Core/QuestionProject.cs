@@ -11,7 +11,8 @@ public enum TaskStep
     WordExport,
     PdfExport,
     LatexExport,
-    JsonExport
+    JsonExport,
+    AiReview
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

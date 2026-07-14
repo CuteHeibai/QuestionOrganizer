@@ -18,7 +18,8 @@ public sealed class ProcessingTaskManager(
         TaskStep.WordExport,
         TaskStep.PdfExport,
         TaskStep.LatexExport,
-        TaskStep.JsonExport
+        TaskStep.JsonExport,
+        TaskStep.AiReview
     ];
 
     public event Action<string>? LogAdded;
@@ -109,6 +110,10 @@ public sealed class ProcessingTaskManager(
                 await repository.SaveDataAsync(project, "document.json", figureDocument);
                 break;
 
+            case TaskStep.AiReview:
+                await ReviewOutputsAsync(project, cancellationToken);
+                break;
+
             default:
                 var exporter = exporters.FirstOrDefault(item => item.Step == step)
                     ?? throw new InvalidOperationException($"未注册 {step} 导出器。");
@@ -116,6 +121,63 @@ public sealed class ProcessingTaskManager(
                 await exporter.ExportAsync(project, exportDocument, cancellationToken);
                 break;
         }
+    }
+
+    private async Task ReviewOutputsAsync(QuestionProject project, CancellationToken cancellationToken)
+    {
+        var document = await RequireDataAsync<QuestionDocument>(project, "document.json");
+        var generatedFiles = await ReadGeneratedFilesAsync(project, cancellationToken);
+        var review = await aiProvider.ReviewOutputsAsync(
+            project.SourcePath,
+            document,
+            generatedFiles,
+            project.AiInstructions,
+            cancellationToken);
+        await repository.SaveDataAsync(project, "review.json", review);
+        LogAdded?.Invoke(string.IsNullOrWhiteSpace(review.Summary)
+            ? "AI 复核完成"
+            : $"AI 复核：{review.Summary}");
+
+        if (review.Passed || review.CorrectedDocument is null) return;
+
+        LogAdded?.Invoke("AI 复核发现问题，正在应用修正并重新导出...");
+        var corrected = review.CorrectedDocument;
+        await SvgWriter.WriteAllAsync(project, corrected.Figures, cancellationToken);
+        await repository.SaveDataAsync(project, "document.json", corrected);
+        foreach (var exporter in exporters.Where(item => !IsDisabledExport(project, item.Step)))
+        {
+            await exporter.ExportAsync(project, corrected, cancellationToken);
+            var exportRecord = project.Steps[exporter.Step];
+            exportRecord.State = StepState.Completed;
+            exportRecord.Error = string.Empty;
+            exportRecord.CompletedAt = DateTimeOffset.Now;
+        }
+    }
+
+    private static async Task<IReadOnlyDictionary<string, string>> ReadGeneratedFilesAsync(
+        QuestionProject project,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fileName in new[] { "document.json", "metadata.json", "question.html", "question.tex" })
+        {
+            var path = Path.Combine(project.DirectoryPath, fileName);
+            if (File.Exists(path))
+                result[fileName] = await File.ReadAllTextAsync(path, cancellationToken);
+        }
+
+        foreach (var path in Directory.EnumerateFiles(project.DirectoryPath, "*.svg").Take(12))
+        {
+            result[Path.GetFileName(path)] = await File.ReadAllTextAsync(path, cancellationToken);
+        }
+
+        foreach (var fileName in new[] { "question.docx", "question.pdf" })
+        {
+            var path = Path.Combine(project.DirectoryPath, fileName);
+            if (File.Exists(path))
+                result[fileName] = $"文件存在，大小 {new FileInfo(path).Length} 字节。";
+        }
+        return result;
     }
 
     private async Task<T> RequireDataAsync<T>(QuestionProject project, string fileName)
@@ -132,6 +194,7 @@ public sealed class ProcessingTaskManager(
         {
             TaskStep.FormulaRecognition => TaskStep.Ocr,
             TaskStep.FigureRedraw => TaskStep.FormulaRecognition,
+            TaskStep.AiReview => TaskStep.FigureRedraw,
             _ => TaskStep.FigureRedraw
         };
         if (project.Steps[required].State != StepState.Completed)
@@ -155,6 +218,7 @@ public sealed class ProcessingTaskManager(
         TaskStep.PdfExport => !project.OutputSelection.Pdf,
         TaskStep.LatexExport => !project.OutputSelection.Latex,
         TaskStep.JsonExport => !project.OutputSelection.Json,
+        TaskStep.AiReview => !project.OutputSelection.HasAnyOutput,
         _ => false
     };
 
@@ -167,6 +231,7 @@ public sealed class ProcessingTaskManager(
         TaskStep.PdfExport => "PDF",
         TaskStep.LatexExport => "LaTeX",
         TaskStep.JsonExport => "JSON",
+        TaskStep.AiReview => "AI 复核",
         _ => step.ToString()
     };
 
@@ -175,6 +240,7 @@ public sealed class ProcessingTaskManager(
         TaskStep.Ocr => "开始 OCR...",
         TaskStep.FormulaRecognition => "识别公式...",
         TaskStep.FigureRedraw => "生成 SVG...",
+        TaskStep.AiReview => "AI 检查生成文件...",
         _ => $"生成 {DisplayName(step)}..."
     };
 

@@ -60,6 +60,7 @@ public partial class MainWindow : Window
     private bool _isClipboardImporting;
     private bool _isPopulatingSettings;
     private bool _isPopulatingProjectOptions;
+    private AiProviderKind _activeSettingsProvider = AiProviderKind.OpenAi;
     private PreviewFile? _activePreviewFile;
 
     public MainWindow()
@@ -164,10 +165,11 @@ public partial class MainWindow : Window
     {
         var kind = GetSelectedOnboardingProvider();
         var preset = GetProviderPreset(kind);
+        var profile = GetProviderProfile(kind);
         ProviderSummaryText.Text = preset.DisplayName;
-        BaseUrlBox.Text = preset.DefaultBaseUrl;
-        if (ShouldReplaceModel(ModelBox.Text, kind))
-            ModelBox.Text = preset.DefaultModel;
+        BaseUrlBox.Text = string.IsNullOrWhiteSpace(profile.BaseUrl) ? preset.DefaultBaseUrl : profile.BaseUrl;
+        ModelBox.Text = string.IsNullOrWhiteSpace(profile.Model) ? preset.DefaultModel : profile.Model;
+        ApiKeyBox.Password = string.Empty;
         ConfigureModelSuggestions(ModelBox, ModelHintText, kind, ModelBox.Text);
         ConnectionFeedback.Text = string.Empty;
         CredentialsContinueButton.IsEnabled = false;
@@ -181,7 +183,10 @@ public partial class MainWindow : Window
         try
         {
             var candidate = GetOnboardingSettings();
-            using var provider = (IDisposable)new AiProviderFactory(_settingsStore).Create(candidate, ApiKeyBox.Password);
+            var apiKey = string.IsNullOrWhiteSpace(ApiKeyBox.Password)
+                ? _settingsStore.ReadApiKey(candidate, candidate.Provider)
+                : ApiKeyBox.Password;
+            using var provider = (IDisposable)new AiProviderFactory(_settingsStore).Create(candidate, apiKey);
             await ((IAiProvider)provider).TestConnectionAsync();
             SetFeedback(ConnectionFeedback, "连接成功", true);
             CredentialsContinueButton.IsEnabled = true;
@@ -199,20 +204,37 @@ public partial class MainWindow : Window
     private async void CredentialsContinue_Click(object sender, RoutedEventArgs e)
     {
         var candidate = GetOnboardingSettings();
-        candidate.ProtectedApiKey = WindowsDataProtector.Protect(ApiKeyBox.Password);
+        var profile = candidate.ProviderProfiles[candidate.Provider];
+        if (!string.IsNullOrWhiteSpace(ApiKeyBox.Password))
+            profile.ProtectedApiKey = WindowsDataProtector.Protect(ApiKeyBox.Password);
+        if (string.IsNullOrWhiteSpace(_settingsStore.ReadApiKey(candidate, candidate.Provider)))
+        {
+            SetFeedback(ConnectionFeedback, "请填写 API Key。", false);
+            return;
+        }
+        MirrorActiveProvider(candidate);
         candidate.OutputDirectory = _settings.OutputDirectory;
         _settings = candidate;
         await _settingsStore.SaveAsync(_settings);
         ShowOnboardingPage(CompletePage, CredentialsPage);
     }
 
-    private AppSettings GetOnboardingSettings() => new()
+    private AppSettings GetOnboardingSettings()
     {
-        Provider = GetSelectedOnboardingProvider(),
-        BaseUrl = BaseUrlBox.Text.Trim(),
-        Model = ModelBox.Text.Trim(),
-        OnboardingCompleted = false
-    };
+        var kind = GetSelectedOnboardingProvider();
+        var candidate = CloneSettings(_settings);
+        candidate.Provider = kind;
+        candidate.OnboardingCompleted = false;
+        var previous = GetProviderProfile(kind);
+        candidate.ProviderProfiles[kind] = new AiProviderSettings
+        {
+            ProtectedApiKey = previous.ProtectedApiKey,
+            BaseUrl = BaseUrlBox.Text.Trim(),
+            Model = ModelBox.Text.Trim()
+        };
+        MirrorActiveProvider(candidate);
+        return candidate;
+    }
 
     private AiProviderKind GetSelectedOnboardingProvider()
     {
@@ -225,6 +247,65 @@ public partial class MainWindow : Window
         ProviderPresets.TryGetValue(kind, out var preset)
             ? preset
             : ProviderPresets[AiProviderKind.OpenAiCompatible];
+
+    private AiProviderSettings GetProviderProfile(AiProviderKind kind)
+    {
+        var preset = GetProviderPreset(kind);
+        if (!_settings.ProviderProfiles.TryGetValue(kind, out var profile))
+        {
+            profile = new AiProviderSettings();
+            _settings.ProviderProfiles[kind] = profile;
+        }
+
+        return new AiProviderSettings
+        {
+            ProtectedApiKey = profile.ProtectedApiKey,
+            BaseUrl = string.IsNullOrWhiteSpace(profile.BaseUrl) ? preset.DefaultBaseUrl : profile.BaseUrl,
+            Model = string.IsNullOrWhiteSpace(profile.Model) ? preset.DefaultModel : profile.Model
+        };
+    }
+
+    private void CaptureSettingsProviderProfile(AiProviderKind kind)
+    {
+        if (SettingsBaseUrlBox is null || SettingsModelBox is null || SettingsApiKeyBox is null) return;
+        var previous = GetProviderProfile(kind);
+        _settings.ProviderProfiles[kind] = new AiProviderSettings
+        {
+            ProtectedApiKey = string.IsNullOrWhiteSpace(SettingsApiKeyBox.Password)
+                ? previous.ProtectedApiKey
+                : WindowsDataProtector.Protect(SettingsApiKeyBox.Password),
+            BaseUrl = SettingsBaseUrlBox.Text.Trim(),
+            Model = SettingsModelBox.Text.Trim()
+        };
+    }
+
+    private static AppSettings CloneSettings(AppSettings settings) => new()
+    {
+        OnboardingCompleted = settings.OnboardingCompleted,
+        Provider = settings.Provider,
+        ProtectedApiKey = settings.ProtectedApiKey,
+        BaseUrl = settings.BaseUrl,
+        Model = settings.Model,
+        ProviderProfiles = settings.ProviderProfiles.ToDictionary(
+            item => item.Key,
+            item => new AiProviderSettings
+            {
+                ProtectedApiKey = item.Value.ProtectedApiKey,
+                BaseUrl = item.Value.BaseUrl,
+                Model = item.Value.Model
+            }),
+        OutputDirectory = settings.OutputDirectory,
+        Theme = settings.Theme,
+        WordTemplatePath = settings.WordTemplatePath
+    };
+
+    private static void MirrorActiveProvider(AppSettings settings)
+    {
+        if (!settings.ProviderProfiles.TryGetValue(settings.Provider, out var profile)) return;
+        settings.ProtectedApiKey = profile.ProtectedApiKey;
+        settings.BaseUrl = profile.BaseUrl;
+        settings.Model = profile.Model;
+    }
 
     private bool NormalizeUnsupportedProvider()
     {
@@ -445,6 +526,7 @@ public partial class MainWindow : Window
         PopulateProjectOutputOptions(project);
         RefreshProjectView(project);
         RefreshPreviewFiles(project, forceSelect: true);
+        UpdateAiActivitySummary();
         NavigateShell(ProjectPage);
     }
 
@@ -480,6 +562,7 @@ public partial class MainWindow : Window
             RunProjectButton.Content = project.CompletedStepCount == 0 ? "开始处理" : "继续处理";
             RunProjectButton.IsEnabled = true;
         }
+        UpdateAiActivitySummary();
     }
 
     private static IReadOnlyList<PreviewFile> BuildPreviewFiles(QuestionProject project)
@@ -708,6 +791,8 @@ public partial class MainWindow : Window
         if (!TryCreateTaskManager(project, out var manager, out var provider)) return;
         var cancellation = new CancellationTokenSource();
         _runningProjects[project.Id] = cancellation;
+        AddLog(singleStep is null ? "AI 开始处理项目" : $"AI 准备重试 {ProcessingTaskManager.DisplayName(singleStep.Value)}");
+        UpdateAiActivitySummary();
         if (_currentProject?.Id == project.Id) RefreshProjectView(project);
         try
         {
@@ -726,6 +811,7 @@ public partial class MainWindow : Window
             cancellation.Dispose();
             _runningProjects.Remove(project.Id);
             provider?.Dispose();
+            UpdateAiActivitySummary();
             if (_currentProject?.Id == project.Id) RefreshProjectView(project);
         }
     }
@@ -876,13 +962,15 @@ public partial class MainWindow : Window
         try
         {
             SelectSettingsProvider(_settings.Provider);
-            SettingsBaseUrlBox.Text = _settings.BaseUrl;
-            SettingsModelBox.Text = _settings.Model;
+            _activeSettingsProvider = _settings.Provider;
+            var profile = GetProviderProfile(_settings.Provider);
+            SettingsBaseUrlBox.Text = profile.BaseUrl;
+            SettingsModelBox.Text = profile.Model;
             ConfigureModelSuggestions(
                 SettingsModelBox,
                 SettingsModelHintText,
                 _settings.Provider,
-                _settings.Model);
+                profile.Model);
             OutputDirectoryBox.Text = _settings.OutputDirectory;
             WordTemplateBox.Text = _settings.WordTemplatePath;
             ThemeBox.SelectedIndex = 0;
@@ -897,12 +985,15 @@ public partial class MainWindow : Window
     private void SettingsProviderBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded || _isPopulatingSettings || SettingsBaseUrlBox is null) return;
+        CaptureSettingsProviderProfile(_activeSettingsProvider);
         var kind = GetSelectedSettingsProvider();
-        var preset = GetProviderPreset(kind);
-        SettingsBaseUrlBox.Text = preset.DefaultBaseUrl;
-        if (ShouldReplaceModel(SettingsModelBox.Text, kind))
-            SettingsModelBox.Text = preset.DefaultModel;
+        _activeSettingsProvider = kind;
+        var profile = GetProviderProfile(kind);
+        SettingsBaseUrlBox.Text = profile.BaseUrl;
+        SettingsModelBox.Text = profile.Model;
+        SettingsApiKeyBox.Password = string.Empty;
         ConfigureModelSuggestions(SettingsModelBox, SettingsModelHintText, kind, SettingsModelBox.Text);
+        SetFeedback(SettingsFeedback, $"已切换到 {GetProviderPreset(kind).DisplayName}，此供应商会使用自己的 URL、模型和 Key。", null);
     }
 
     private void SelectSettingsProvider(AiProviderKind provider)
@@ -950,9 +1041,10 @@ public partial class MainWindow : Window
         SetFeedback(SettingsFeedback, "正在连接...", null);
         try
         {
-            var candidate = ReadAiSettingsForm();
+            CaptureSettingsProviderProfile(_activeSettingsProvider);
+            var candidate = BuildSettingsCandidate(_activeSettingsProvider);
             var apiKey = string.IsNullOrWhiteSpace(SettingsApiKeyBox.Password)
-                ? _settingsStore.ReadApiKey(_settings)
+                ? _settingsStore.ReadApiKey(candidate, candidate.Provider)
                 : SettingsApiKeyBox.Password;
             using var provider = (IDisposable)new AiProviderFactory(_settingsStore).Create(candidate, apiKey);
             await ((IAiProvider)provider).TestConnectionAsync();
@@ -968,13 +1060,12 @@ public partial class MainWindow : Window
     {
         try
         {
-            var candidate = ReadAiSettingsForm();
+            CaptureSettingsProviderProfile(_activeSettingsProvider);
+            var candidate = BuildSettingsCandidate(_activeSettingsProvider);
             candidate.OnboardingCompleted = true;
-            candidate.ProtectedApiKey = string.IsNullOrWhiteSpace(SettingsApiKeyBox.Password)
-                ? _settings.ProtectedApiKey
-                : WindowsDataProtector.Protect(SettingsApiKeyBox.Password);
-            if (string.IsNullOrWhiteSpace(_settingsStore.ReadApiKey(candidate)))
+            if (string.IsNullOrWhiteSpace(_settingsStore.ReadApiKey(candidate, candidate.Provider)))
                 throw new InvalidOperationException("请填写 API Key。");
+            MirrorActiveProvider(candidate);
             _settings = candidate;
             await _settingsStore.SaveAsync(_settings);
             SettingsApiKeyBox.Password = string.Empty;
@@ -986,17 +1077,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private AppSettings ReadAiSettingsForm() => new()
+    private AppSettings BuildSettingsCandidate(AiProviderKind provider)
     {
-        OnboardingCompleted = _settings.OnboardingCompleted,
-        ProtectedApiKey = _settings.ProtectedApiKey,
-        Provider = GetSelectedSettingsProvider(),
-        BaseUrl = SettingsBaseUrlBox.Text.Trim(),
-        Model = SettingsModelBox.Text.Trim(),
-        OutputDirectory = _settings.OutputDirectory,
-        WordTemplatePath = _settings.WordTemplatePath,
-        Theme = _settings.Theme
-    };
+        var candidate = CloneSettings(_settings);
+        candidate.Provider = provider;
+        MirrorActiveProvider(candidate);
+        return candidate;
+    }
 
     private async Task SaveCommonSettingsAsync()
     {
@@ -1077,18 +1164,31 @@ public partial class MainWindow : Window
     private void ToggleLog_Click(object sender, RoutedEventArgs e)
     {
         _logExpanded = !_logExpanded;
-        LogSidebarColumn.Width = new GridLength(_logExpanded ? 280 : 44);
+        LogSidebarColumn.Width = new GridLength(_logExpanded ? 330 : 44);
         LogTitle.Visibility = _logExpanded ? Visibility.Visible : Visibility.Collapsed;
-        LogList.Visibility = _logExpanded ? Visibility.Visible : Visibility.Collapsed;
+        LogListContainer.Visibility = _logExpanded ? Visibility.Visible : Visibility.Collapsed;
         LogChevron.Kind = _logExpanded ? FluentIconKind.ArrowRight : FluentIconKind.ArrowLeft;
-        LogToggleButton.ToolTip = _logExpanded ? "收起运行日志" : "展开运行日志";
+        LogToggleButton.ToolTip = _logExpanded ? "收起 AI 活动" : "展开 AI 活动";
+        UpdateAiActivitySummary();
     }
 
     private void AddLog(string message)
     {
-        LogList.Items.Add($"{DateTime.Now:HH:mm:ss}  {message}");
+        var projectName = _currentProject?.Name;
+        var prefix = string.IsNullOrWhiteSpace(projectName) ? string.Empty : $"[{projectName}] ";
+        LogList.Items.Add($"{DateTime.Now:HH:mm:ss}  {prefix}{message}");
         if (LogList.Items.Count > 100) LogList.Items.RemoveAt(0);
         LogList.ScrollIntoView(LogList.Items[^1]);
+        UpdateAiActivitySummary();
+    }
+
+    private void UpdateAiActivitySummary()
+    {
+        if (AiActivityProjectText is null) return;
+        AiActivityProjectText.Text = _currentProject?.Name ?? "暂无项目";
+        AiActivityStatusText.Text = _runningProjects.Count == 0
+            ? "AI 等待任务。开始处理后，这里会实时显示 OCR、公式识别、图形重绘、导出和复核过程。"
+            : $"正在后台处理 {_runningProjects.Count} 个项目。你可以切换页面或打开其他项目，任务会继续运行。";
     }
 
     private static void SetFeedback(TextBlock target, string message, bool? success)

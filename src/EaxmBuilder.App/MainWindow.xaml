@@ -676,17 +676,36 @@
                                     ToolTip="展开运行日志" Click="ToggleLog_Click">
                                 <controls:FluentIcon x:Name="LogChevron" Kind="ArrowLeft" Width="15" Height="15" />
                             </Button>
-                            <TextBlock x:Name="LogTitle" Text="运行日志" FontSize="13" FontWeight="SemiBold"
+                            <TextBlock x:Name="LogTitle" Text="AI 活动" FontSize="13" FontWeight="SemiBold"
                                        Margin="16,0,48,0" VerticalAlignment="Center" Visibility="Collapsed" />
-                            <ListBox x:Name="LogList" Grid.Row="1" Visibility="Collapsed" BorderThickness="0"
-                                     Background="Transparent" Padding="10,8" FontSize="11" Foreground="#555555"
-                                     HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="4,5" />
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                            <Grid Grid.Row="1" Visibility="Collapsed" x:Name="LogListContainer">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Border Margin="12,4,12,8" Background="#FFFFFF" BorderBrush="#EEEEEE"
+                                        BorderThickness="1" CornerRadius="8" Padding="12,10">
+                                    <StackPanel>
+                                        <TextBlock x:Name="AiActivityProjectText" Text="暂无项目"
+                                                   FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="AiActivityStatusText" Text="AI 等待任务"
+                                                   FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                   Margin="0,5,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                                <ListBox x:Name="LogList" Grid.Row="1" BorderThickness="0"
+                                         Background="Transparent" Padding="10,0,10,8" FontSize="11" Foreground="#555555"
+                                         HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#FFFFFF" BorderBrush="#EEEEEE" BorderThickness="1"
+                                                    CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>

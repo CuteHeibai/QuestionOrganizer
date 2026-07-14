@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using System.Net;
 using System.Windows.Media.Animation;
 using EaxmBuilder.Controls;
 using EaxmBuilder.AI;
@@ -26,10 +27,18 @@ try
     {
         Title = "圆的方程",
         QuestionNumber = "21",
+        LatexSymbolMap = new Dictionary<string, string>
+        {
+            [@"\customstar"] = "★",
+            [@"\widearc"] = "⌒#1"
+        },
         Blocks =
         [
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "已知圆 C 的方程为" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = "x^2+y^2=1" },
+            new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "其中" },
+            new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\triangle ABC,\ \mathrm{AB}\perp CD,\ \sqrt{x_1^2}+\angle A+\sin\theta" },
+            new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\customstar+\widearc{AB}" },
             new QuestionBlock { Type = QuestionBlockType.Figure, FigureId = "figure1" }
         ],
         Figures =
@@ -106,8 +115,11 @@ try
         File.Exists(Path.Combine(selectedOutputDirectory, "question.pdf")) ||
         selectedOutputProject.Steps[TaskStep.PdfExport].State != StepState.Skipped ||
         selectedOutputProject.Steps[TaskStep.LatexExport].State != StepState.Skipped ||
-        selectedOutputProject.Steps[TaskStep.JsonExport].State != StepState.Skipped)
+        selectedOutputProject.Steps[TaskStep.JsonExport].State != StepState.Skipped ||
+        selectedOutputProject.Steps[TaskStep.AiReview].State != StepState.Completed)
         throw new InvalidOperationException("按输出选项跳过导出步骤失败。");
+    if (!File.Exists(Path.Combine(selectedOutputDirectory, "review.json")))
+        throw new InvalidOperationException("AI 复核步骤未生成 review.json。");
 
     Exception? animationError = null;
     var animationThread = new Thread(() =>
@@ -167,6 +179,23 @@ try
     }
     if (clientField.GetValue(doubaoProvider) is not HttpClient { Timeout.TotalMinutes: >= 20 })
         throw new InvalidOperationException("AI 长任务请求超时时间过短，公式识别容易提前失败。");
+    var profileSettings = new AppSettings { Provider = AiProviderKind.Doubao };
+    profileSettings.ProviderProfiles[AiProviderKind.OpenAi] = new AiProviderSettings
+    {
+        ProtectedApiKey = WindowsDataProtector.Protect("openai-key"),
+        BaseUrl = "https://api.openai.com/v1",
+        Model = "gpt-openai"
+    };
+    profileSettings.ProviderProfiles[AiProviderKind.Doubao] = new AiProviderSettings
+    {
+        ProtectedApiKey = WindowsDataProtector.Protect("doubao-key"),
+        BaseUrl = "https://ark.example/v3",
+        Model = "doubao-model"
+    };
+    var settingsStore = new SettingsStore();
+    if (settingsStore.ReadApiKey(profileSettings, AiProviderKind.OpenAi) != "openai-key" ||
+        settingsStore.ReadApiKey(profileSettings, AiProviderKind.Doubao) != "doubao-key")
+        throw new InvalidOperationException("每个 AI 供应商未能保存独立 API Key。");
     if (typeof(DocxExporter).Assembly.GetManifestResourceStream("EaxmBuilder.Assets.default-template.docx") is not { } templateResource)
         throw new InvalidOperationException("内置 Word 模板未嵌入程序，单文件安装包会缺少默认模板。");
     templateResource.Dispose();
@@ -241,7 +270,13 @@ try
     RequireFile("question.pdf");
 
     XDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "figure1.svg")));
-    JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "metadata.json")));
+    using (var metadata = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "metadata.json"))))
+    {
+        if (!metadata.RootElement.TryGetProperty("LatexSymbolMap", out var symbolMap) ||
+            !symbolMap.TryGetProperty(@"\customstar", out var customStar) ||
+            customStar.GetString() != "★")
+            throw new InvalidOperationException("题目级 LaTeX 符号映射未写入 metadata.json。");
+    }
 
     using (var archive = ZipFile.OpenRead(Path.Combine(output, "question.docx")))
     {
@@ -267,6 +302,18 @@ try
         !html.Contains("x&#178;+y&#178;=1", StringComparison.Ordinal) ||
         !html.Contains("<span class=\"formula\">", StringComparison.Ordinal))
         throw new InvalidOperationException("PDF/HTML 导出仍存在块级公式、原始 LaTeX 或公式间距风险。");
+    var decodedHtml = WebUtility.HtmlDecode(html);
+    if (decodedHtml.Contains(@"\triangle", StringComparison.Ordinal) ||
+        decodedHtml.Contains(@"\mathrm", StringComparison.Ordinal) ||
+        decodedHtml.Contains(@"\sqrt", StringComparison.Ordinal) ||
+        decodedHtml.Contains(@"\customstar", StringComparison.Ordinal) ||
+        decodedHtml.Contains(@"\widearc", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("△ ABC", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("AB⊥ CD", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("√(x₁²)", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("∠ A+sinθ", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("★+⌒AB", StringComparison.Ordinal))
+        throw new InvalidOperationException("LaTeX 常见命令未能解析为可读数学符号。");
 
     var pdfHeader = new byte[4];
     await using (var stream = File.OpenRead(Path.Combine(output, "question.pdf")))
@@ -332,4 +379,17 @@ internal sealed class FakeAiProvider : IAiProvider
         string additionalInstructions,
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<FigureDocument>>([]);
+
+    public Task<OutputReviewResult> ReviewOutputsAsync(
+        string sourcePath,
+        QuestionDocument document,
+        IReadOnlyDictionary<string, string> generatedFiles,
+        string additionalInstructions,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new OutputReviewResult
+        {
+            Passed = true,
+            Summary = $"检查了 {generatedFiles.Count} 个生成文件。",
+            Issues = []
+        });
 }
