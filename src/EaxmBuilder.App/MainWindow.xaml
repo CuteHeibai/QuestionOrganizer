@@ -1,0 +1,757 @@
+<Window x:Class="EaxmBuilder.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:controls="clr-namespace:EaxmBuilder.Controls"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="题目整理" Width="1180" Height="760" MinWidth="980" MinHeight="640"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
+        Background="{StaticResource PageBrush}" Foreground="{StaticResource TextBrush}"
+        Loaded="Window_Loaded" PreviewKeyDown="Window_PreviewKeyDown">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="ProviderOption" TargetType="RadioButton">
+            <Setter Property="Height" Value="74" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Card" Background="#FFFFFF" BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="18,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="28" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="Dot" Width="16" Height="16" CornerRadius="8"
+                                        BorderBrush="#B8B8B8" BorderThickness="1.5" HorizontalAlignment="Left">
+                                    <Ellipse x:Name="DotFill" Width="8" Height="8" Fill="#171717" Visibility="Collapsed" />
+                                </Border>
+                                <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                                <controls:FluentIcon Grid.Column="2" Kind="ArrowRight" Width="15" Height="15"
+                                                     Foreground="#9A9A9A" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Card" Property="BorderBrush" Value="#171717" />
+                                <Setter TargetName="Dot" Property="BorderBrush" Value="#171717" />
+                                <Setter TargetName="DotFill" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Card" Property="Background" Value="#FAFAFA" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SidebarButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+            <Setter Property="Width" Value="42" />
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style x:Key="ProjectRowButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="12,11" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"
+                                              TextElement.Foreground="{StaticResource TextBrush}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource ButtonBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource HoverBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="LabelText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="Margin" Value="0,0,0,7" />
+        </Style>
+        <Style x:Key="ModernCheckBox" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Margin="0,0,14,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="22" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="Box" Width="16" Height="16" CornerRadius="4"
+                                    Background="#FFFFFF" BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <controls:FluentIcon x:Name="Tick" Kind="Checkmark" Width="12" Height="12"
+                                                     Foreground="#FFFFFF" Visibility="Collapsed"
+                                                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="#171717" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#171717" />
+                                <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#A0A0A0" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border BorderBrush="#DADADA" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#EFEFEF" BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <TextBlock Text="题目整理" FontSize="12" Foreground="#565656" Margin="16,0,0,0"
+                               VerticalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource IconButton}" ToolTip="最小化" Click="Minimize_Click" Width="46" Height="43">
+                            <controls:FluentIcon Kind="Subtract" Width="15" Height="15" />
+                        </Button>
+                        <Button Style="{StaticResource IconButton}" ToolTip="最大化" Click="Maximize_Click" Width="46" Height="43">
+                            <controls:FluentIcon Kind="Maximize" Width="14" Height="14" />
+                        </Button>
+                        <Button x:Name="CloseButton" Style="{StaticResource IconButton}" ToolTip="关闭" Click="Close_Click" Width="46" Height="43">
+                            <controls:FluentIcon Kind="Dismiss" Width="15" Height="15" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <!-- First-run onboarding -->
+                <Grid x:Name="OnboardingRoot" Background="#FFFFFF">
+                    <Grid x:Name="WelcomePage" Opacity="1">
+                        <StackPanel Width="430" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Border Width="52" Height="52" Background="#F4F4F4" CornerRadius="14" HorizontalAlignment="Left">
+                                <controls:FluentIcon Kind="Document" Width="23" Height="23"
+                                                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="欢迎使用" FontSize="30" FontWeight="SemiBold" Margin="0,28,0,10" />
+                            <TextBlock Text="继续之前，请配置 AI 服务。整个过程只需要一分钟。"
+                                       FontSize="15" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,30" />
+                            <Button Style="{StaticResource PrimaryButton}" Content="开始配置" HorizontalAlignment="Left"
+                                    Click="StartOnboarding_Click" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid x:Name="ProviderPage" Visibility="Collapsed" Opacity="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="64" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="1 / 3" FontSize="12" Foreground="{StaticResource MutedBrush}"
+                                   Margin="34,24,0,0" />
+                        <StackPanel Grid.Row="1" Width="520" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,72,0,40">
+                            <TextBlock Text="选择 AI 提供商" FontSize="28" FontWeight="SemiBold" />
+                            <TextBlock Text="当前支持 OpenAI、火山豆包和兼容 OpenAI API 的服务。"
+                                       Foreground="{StaticResource MutedBrush}" Margin="0,8,0,28" />
+                            <RadioButton x:Name="OpenAiOption" GroupName="Provider" IsChecked="True"
+                                         Style="{StaticResource ProviderOption}" Checked="Provider_Checked">
+                                <StackPanel>
+                                    <TextBlock Text="OpenAI" FontWeight="SemiBold" />
+                                    <TextBlock Text="官方 API，推荐" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="CompatibleOption" GroupName="Provider"
+                                         Style="{StaticResource ProviderOption}" Checked="Provider_Checked">
+                                <StackPanel>
+                                    <TextBlock Text="OpenAI Compatible" FontWeight="SemiBold" />
+                                    <TextBlock Text="使用自定义 Base URL" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="DoubaoOption" GroupName="Provider"
+                                         Style="{StaticResource ProviderOption}" Checked="Provider_Checked">
+                                <StackPanel>
+                                    <TextBlock Text="火山豆包" FontWeight="SemiBold" />
+                                    <TextBlock Text="使用火山方舟 OpenAI 兼容接口，推荐视觉模型" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </RadioButton>
+                            <TextBlock Text="Anthropic · Gemini · 阿里百炼 · 智谱 AI 之后接入"
+                                       FontSize="12" Foreground="#A0A0A0" Margin="0,10,0,28" />
+                            <Button Style="{StaticResource PrimaryButton}" Content="继续" HorizontalAlignment="Right"
+                                    Click="ProviderContinue_Click" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid x:Name="CredentialsPage" Visibility="Collapsed" Opacity="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="64" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Button Grid.Row="0" Style="{StaticResource IconButton}" ToolTip="返回"
+                                Margin="24,12,0,0" HorizontalAlignment="Left" Click="CredentialsBack_Click">
+                            <controls:FluentIcon Kind="ArrowLeft" Width="17" Height="17" />
+                        </Button>
+                        <TextBlock Grid.Row="0" Text="2 / 3" FontSize="12" Foreground="{StaticResource MutedBrush}"
+                                   HorizontalAlignment="Center" Margin="0,24,0,0" />
+                        <StackPanel Grid.Row="1" Width="520" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,58,0,40">
+                            <TextBlock Text="连接 AI 服务" FontSize="28" FontWeight="SemiBold" />
+                            <TextBlock x:Name="ProviderSummaryText" Text="OpenAI" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,28" />
+                            <TextBlock Text="API Key" Style="{StaticResource LabelText}" />
+                            <PasswordBox x:Name="ApiKeyBox" Style="{StaticResource FieldPassword}" />
+                            <TextBlock Text="Base URL" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                            <TextBox x:Name="BaseUrlBox" Style="{StaticResource Field}" Text="https://api.openai.com/v1" />
+                            <TextBlock Text="模型" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                            <ComboBox x:Name="ModelBox" Style="{StaticResource ModernComboBox}" IsEditable="True"
+                                      IsTextSearchEnabled="False" StaysOpenOnEdit="True" Text="gpt-5.5" />
+                            <TextBlock x:Name="ModelHintText" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                       Margin="0,7,0,0" TextWrapping="Wrap" />
+                            <Grid Margin="0,24,0,0">
+                                <TextBlock x:Name="ConnectionFeedback" VerticalAlignment="Center" FontSize="12" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button x:Name="TestConnectionButton" Style="{StaticResource SecondaryButton}" Content="测试连接"
+                                            Margin="0,0,10,0" Click="TestConnection_Click" />
+                                    <Button x:Name="CredentialsContinueButton" Style="{StaticResource PrimaryButton}" Content="继续"
+                                            IsEnabled="False" Click="CredentialsContinue_Click" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid x:Name="CompletePage" Visibility="Collapsed" Opacity="0">
+                        <StackPanel Width="430" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Border Width="52" Height="52" CornerRadius="26" Background="#EAF7EE" HorizontalAlignment="Left">
+                                <controls:FluentIcon Kind="Checkmark" Width="23" Height="23" Foreground="{StaticResource SuccessBrush}"
+                                                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="配置完成" FontSize="30" FontWeight="SemiBold" Margin="0,28,0,10" />
+                            <TextBlock Text="现在可以开始整理第一道题目。" FontSize="15"
+                                       Foreground="{StaticResource MutedBrush}" Margin="0,0,0,30" />
+                            <Button Style="{StaticResource PrimaryButton}" Content="进入主界面" HorizontalAlignment="Left"
+                                    Click="FinishOnboarding_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- Main application -->
+                <Grid x:Name="ShellRoot" Visibility="Collapsed" Background="#FFFFFF">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="LogSidebarColumn" Width="44" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Background="{StaticResource SideBrush}" BorderBrush="#EEEEEE" BorderThickness="0,0,1,0">
+                        <Grid>
+                            <StackPanel Margin="0,18,0,0" HorizontalAlignment="Center">
+                                <Button x:Name="HomeNavButton" Style="{StaticResource SidebarButton}" ToolTip="首页"
+                                        AutomationProperties.Name="首页" Click="Home_Click">
+                                    <controls:FluentIcon Kind="Home" Width="18" Height="18" />
+                                </Button>
+                                <Button x:Name="ProjectNavButton" Style="{StaticResource SidebarButton}" ToolTip="项目"
+                                        AutomationProperties.Name="项目" Click="ProjectNav_Click">
+                                    <controls:FluentIcon Kind="Document" Width="18" Height="18" />
+                                </Button>
+                            </StackPanel>
+                            <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,12" HorizontalAlignment="Center">
+                                <Button x:Name="SettingsNavButton" Style="{StaticResource SidebarButton}" ToolTip="设置"
+                                        AutomationProperties.Name="设置" Click="Settings_Click">
+                                    <controls:FluentIcon Kind="Settings" Width="18" Height="18" />
+                                </Button>
+                                <Button x:Name="AboutNavButton" Style="{StaticResource SidebarButton}" ToolTip="关于"
+                                        AutomationProperties.Name="关于" Click="About_Click">
+                                    <controls:FluentIcon Kind="Info" Width="18" Height="18" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Column="1">
+                        <Grid x:Name="HomePage" Opacity="1">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel MaxWidth="760" HorizontalAlignment="Stretch" Margin="30,54,30,40">
+                                    <TextBlock Text="开始整理" FontSize="26" FontWeight="SemiBold" />
+                                    <TextBlock Text="添加一道数学题目" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,26" />
+                                    <Border x:Name="DropZone" Height="224" Background="#FAFAFA" BorderBrush="#DEDEDE"
+                                            BorderThickness="1" CornerRadius="8" AllowDrop="True"
+                                            DragEnter="DropZone_DragEnter" DragLeave="DropZone_DragLeave" Drop="DropZone_Drop">
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <controls:FluentIcon Kind="ArrowUpload" Width="29" Height="29"
+                                                                 Foreground="#4B4B4B" HorizontalAlignment="Center" />
+                                            <TextBlock Text="拖拽或粘贴题目图片到这里" FontSize="16" FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center" Margin="0,18,0,6" />
+                                            <TextBlock Text="PNG、JPG 或 PDF" FontSize="12" Foreground="{StaticResource MutedBrush}"
+                                                       HorizontalAlignment="Center" Margin="0,0,0,18" />
+                                            <Button Style="{StaticResource SecondaryButton}" Content="选择文件" Click="ChooseFile_Click" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Grid Margin="0,42,0,16">
+                                        <TextBlock Text="最近项目" FontSize="16" FontWeight="SemiBold" />
+                                        <Button Style="{StaticResource IconButton}" ToolTip="刷新"
+                                                HorizontalAlignment="Right" Click="RefreshRecent_Click">
+                                            <controls:FluentIcon Kind="Refresh" Width="16" Height="16" />
+                                        </Button>
+                                    </Grid>
+                                    <TextBlock x:Name="NoRecentText" Text="还没有项目" Foreground="{StaticResource MutedBrush}"
+                                               FontSize="13" Margin="0,12,0,0" />
+                                    <ItemsControl x:Name="RecentProjectsList">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource SecondaryButton}" Width="240" Height="86"
+                                                        Margin="0,0,12,12" Padding="16,13" HorizontalContentAlignment="Stretch"
+                                                        AutomationProperties.Name="{Binding Name}"
+                                                        Tag="{Binding}" Click="RecentProject_Click">
+                                                    <Grid>
+                                                        <Grid.RowDefinitions><RowDefinition /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <Grid Grid.Row="1" Margin="0,7,0,0">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="{Binding UpdatedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="11"
+                                                                       Foreground="{StaticResource MutedBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding StatusText}" FontSize="11" Margin="10,0,0,0"
+                                                                       Foreground="{StaticResource MutedBrush}"
+                                                                       HorizontalAlignment="Right" />
+                                                        </Grid>
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+
+                        <Grid x:Name="ProjectsPage" Visibility="Collapsed" Opacity="0">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel MaxWidth="820" HorizontalAlignment="Stretch" Margin="36,46,36,50">
+                                    <Grid Margin="0,0,0,24">
+                                        <StackPanel>
+                                            <TextBlock Text="项目" FontSize="26" FontWeight="SemiBold" />
+                                            <TextBlock Text="继续处理以前的题目" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,0" />
+                                        </StackPanel>
+                                        <Button Style="{StaticResource IconButton}" ToolTip="刷新项目"
+                                                AutomationProperties.Name="刷新项目" HorizontalAlignment="Right"
+                                                VerticalAlignment="Center" Click="RefreshProjects_Click">
+                                            <controls:FluentIcon Kind="Refresh" Width="16" Height="16" />
+                                        </Button>
+                                    </Grid>
+                                    <TextBlock x:Name="NoProjectsText" Text="还没有项目" FontSize="13"
+                                               Foreground="{StaticResource MutedBrush}" Margin="12,18,0,0" />
+                                    <ItemsControl x:Name="AllProjectsList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="#EEEEEE" BorderThickness="0,0,0,1">
+                                                    <Button Style="{StaticResource ProjectRowButton}" Height="68"
+                                                            Tag="{Binding}" AutomationProperties.Name="{Binding Name}"
+                                                            Click="AllProject_Click">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="42" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="28" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <controls:FluentIcon Kind="Document" Width="18" Height="18"
+                                                                                 VerticalAlignment="Center" />
+                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding DirectoryPath}" FontSize="11"
+                                                                           Foreground="{StaticResource MutedBrush}"
+                                                                           TextTrimming="CharacterEllipsis" Margin="0,4,18,0" />
+                                                            </StackPanel>
+                                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                                <TextBlock Text="{Binding StatusText}" FontSize="12" HorizontalAlignment="Right" />
+                                                                <TextBlock Text="{Binding UpdatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm}}" FontSize="11"
+                                                                           Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" />
+                                                            </StackPanel>
+                                                            <controls:FluentIcon Grid.Column="3" Kind="ArrowRight" Width="14" Height="14"
+                                                                                 Foreground="{StaticResource MutedBrush}"
+                                                                                 HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                                        </Grid>
+                                                    </Button>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+
+                        <Grid x:Name="ProjectPage" Visibility="Collapsed" Opacity="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="70" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid Margin="26,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Button Style="{StaticResource IconButton}" ToolTip="返回首页" Click="Home_Click">
+                                    <controls:FluentIcon Kind="ArrowLeft" Width="17" Height="17" />
+                                </Button>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0">
+                                    <TextBlock x:Name="ProjectTitle" FontSize="18" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ProjectPath" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource IconButton}" ToolTip="打开项目文件夹"
+                                            Margin="0,0,8,0" Click="OpenProjectFolder_Click">
+                                        <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
+                                    </Button>
+                                    <Button x:Name="AiInstructionsButton" Style="{StaticResource SecondaryButton}" Content="AI 要求"
+                                            Margin="0,0,10,0" Click="EditAiInstructions_Click" />
+                                    <Button x:Name="RunProjectButton" Style="{StaticResource PrimaryButton}" Content="开始处理"
+                                            Click="RunProject_Click" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid Grid.Row="1" Margin="30,8,30,36">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="0.85*" />
+                                    <ColumnDefinition Width="40" />
+                                    <ColumnDefinition Width="1.15*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Background="#FAFAFA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8">
+                                    <Grid Margin="14">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <StackPanel>
+                                                <TextBlock Text="文件预览" FontSize="15" FontWeight="SemiBold" />
+                                                <TextBlock x:Name="PreviewHintText" Text="生成过程中会自动出现可预览文件"
+                                                           FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" />
+                                            </StackPanel>
+                                            <Button x:Name="OpenPreviewButton" Style="{StaticResource IconButton}" ToolTip="打开当前文件"
+                                                    HorizontalAlignment="Right" Background="{StaticResource ButtonBrush}"
+                                                    Click="OpenPreviewFile_Click">
+                                                <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
+                                            </Button>
+                                        </Grid>
+                                        <ItemsControl x:Name="PreviewFilesList" Grid.Row="1" Margin="0,14,0,12">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Style="{StaticResource SecondaryButton}" Height="32"
+                                                            Padding="10,5" Margin="0,0,8,8"
+                                                            Content="{Binding Label}" Tag="{Binding}"
+                                                            Click="PreviewFile_Click" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#EEEEEE"
+                                                BorderThickness="1" CornerRadius="8" ClipToBounds="True">
+                                            <Grid>
+                                                <Image x:Name="SourcePreview" Stretch="Uniform" Margin="14" />
+                                                <wv2:WebView2 x:Name="FilePreviewBrowser" Visibility="Collapsed" />
+                                                <TextBox x:Name="TextFilePreview" Visibility="Collapsed" BorderThickness="0"
+                                                         Background="#FFFFFF" IsReadOnly="True" TextWrapping="Wrap"
+                                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                                         FontFamily="Consolas" FontSize="12" Padding="14" />
+                                                <StackPanel x:Name="EmptyPreview" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <controls:FluentIcon Kind="Document" Width="42" Height="42"
+                                                                         HorizontalAlignment="Center" Foreground="#9A9A9A" />
+                                                    <TextBlock Text="暂无可预览文件" Margin="0,14,0,0"
+                                                               FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="处理任务" FontSize="18" FontWeight="SemiBold" />
+                                    <TextBlock Text="失败的步骤可以单独重新执行" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,18" />
+                                    <Border Background="#FAFAFA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                            CornerRadius="8" Padding="14" Margin="0,0,0,18">
+                                        <StackPanel>
+                                            <TextBlock Text="输出内容" FontSize="14" FontWeight="SemiBold" />
+                                            <TextBlock Text="只生成你需要的文件，也可以追加到已有 Word"
+                                                       FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,12" />
+                                            <WrapPanel>
+                                                <CheckBox x:Name="OutputWordBox" Style="{StaticResource ModernCheckBox}" Content="Word"
+                                                          Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
+                                                <CheckBox x:Name="OutputPdfBox" Style="{StaticResource ModernCheckBox}" Content="PDF"
+                                                          Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
+                                                <CheckBox x:Name="OutputLatexBox" Style="{StaticResource ModernCheckBox}" Content="LaTeX"
+                                                          Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
+                                                <CheckBox x:Name="OutputJsonBox" Style="{StaticResource ModernCheckBox}" Content="JSON"
+                                                          Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
+                                            </WrapPanel>
+                                            <CheckBox x:Name="AppendWordBox" Style="{StaticResource ModernCheckBox}" Content="追加到现有 Word 文档"
+                                                      Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="AppendWordTargetBox" Style="{StaticResource Field}" Height="34"
+                                                         LostKeyboardFocus="AppendWordTarget_LostKeyboardFocus"
+                                                         KeyDown="AppendWordTarget_KeyDown" />
+                                                <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="38" Height="34"
+                                                        Margin="8,0,0,0" Background="{StaticResource ButtonBrush}"
+                                                        ToolTip="选择要追加的 Word 文档" Click="ChooseAppendWordTarget_Click">
+                                                    <controls:FluentIcon Kind="FolderOpen" Width="15" Height="15" />
+                                                </Button>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                    <ItemsControl x:Name="TaskStepsList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="#ECECEC" BorderThickness="0,0,0,1" Padding="2,14">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <controls:FluentIcon Kind="{Binding Icon}" Width="16" Height="16"
+                                                                             Foreground="{Binding StatusBrush}" VerticalAlignment="Center">
+                                                            <controls:FluentIcon.Style>
+                                                                <Style TargetType="controls:FluentIcon">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                                                            <DataTrigger.EnterActions>
+                                                                                <BeginStoryboard>
+                                                                                    <Storyboard>
+                                                                                        <DoubleAnimation Storyboard.TargetProperty="RotationAngle"
+                                                                                                         From="0" To="360" Duration="0:0:0.9"
+                                                                                                         RepeatBehavior="Forever" />
+                                                                                    </Storyboard>
+                                                                                </BeginStoryboard>
+                                                                            </DataTrigger.EnterActions>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </controls:FluentIcon.Style>
+                                                        </controls:FluentIcon>
+                                                        <StackPanel Grid.Column="1">
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
+                                                            <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                                       Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                                        </StackPanel>
+                                                        <Button Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="重试"
+                                                                Padding="12,7" Tag="{Binding Step}" Visibility="{Binding RetryVisibility}"
+                                                                Click="RetryStep_Click" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+
+                        <Grid x:Name="SettingsPage" Visibility="Collapsed" Opacity="0">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel MaxWidth="680" HorizontalAlignment="Stretch" Margin="30,44,30,50">
+                                    <TextBlock Text="设置" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,34" />
+
+                                    <TextBlock Text="AI" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock Text="提供商" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <ComboBox x:Name="SettingsProviderBox" Style="{StaticResource ModernComboBox}"
+                                              SelectionChanged="SettingsProviderBox_SelectionChanged">
+                                        <ComboBoxItem Content="OpenAI" Tag="OpenAi" />
+                                        <ComboBoxItem Content="OpenAI Compatible" Tag="OpenAiCompatible" />
+                                        <ComboBoxItem Content="火山豆包" Tag="Doubao" />
+                                    </ComboBox>
+                                    <TextBlock Text="API Key" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <PasswordBox x:Name="SettingsApiKeyBox" Style="{StaticResource FieldPassword}" />
+                                    <TextBlock Text="留空表示继续使用已保存的 Key" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" />
+                                    <TextBlock Text="Base URL" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <TextBox x:Name="SettingsBaseUrlBox" Style="{StaticResource Field}" />
+                                    <TextBlock Text="模型" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <ComboBox x:Name="SettingsModelBox" Style="{StaticResource ModernComboBox}" IsEditable="True"
+                                              IsTextSearchEnabled="False" StaysOpenOnEdit="True" />
+                                    <TextBlock x:Name="SettingsModelHintText" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                               Margin="0,7,0,0" TextWrapping="Wrap" />
+
+                                    <Separator Margin="0,34" Background="#EEEEEE" />
+                                    <TextBlock Text="文件" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock Text="默认输出目录" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                                        <TextBox x:Name="OutputDirectoryBox" Style="{StaticResource Field}"
+                                                 LostKeyboardFocus="CommonSettings_LostKeyboardFocus"
+                                                 KeyDown="CommonSettings_KeyDown" />
+                                        <Button Grid.Column="2" Style="{StaticResource IconButton}" ToolTip="选择目录"
+                                                Background="{StaticResource ButtonBrush}" Click="ChooseOutputDirectory_Click">
+                                            <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
+                                        </Button>
+                                    </Grid>
+                                    <TextBlock Text="Word 模板" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                                        <TextBox x:Name="WordTemplateBox" Style="{StaticResource Field}"
+                                                 LostKeyboardFocus="CommonSettings_LostKeyboardFocus"
+                                                 KeyDown="CommonSettings_KeyDown" />
+                                        <Button Grid.Column="2" Style="{StaticResource IconButton}" ToolTip="选择模板"
+                                                Background="{StaticResource ButtonBrush}" Click="ChooseWordTemplate_Click">
+                                            <controls:FluentIcon Kind="Document" Width="17" Height="17" />
+                                        </Button>
+                                    </Grid>
+                                    <TextBlock Text="留空时使用内置模板" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" />
+
+                                    <Separator Margin="0,34" Background="#EEEEEE" />
+                                    <TextBlock Text="外观" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock Text="主题" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                    <ComboBox x:Name="ThemeBox" Style="{StaticResource ModernComboBox}" SelectedIndex="0"
+                                              SelectionChanged="ThemeBox_SelectionChanged">
+                                        <ComboBoxItem Content="浅色" />
+                                        <ComboBoxItem Content="跟随系统（即将支持）" IsEnabled="False" />
+                                        <ComboBoxItem Content="深色（即将支持）" IsEnabled="False" />
+                                    </ComboBox>
+
+                                    <Grid Margin="0,30,0,0">
+                                        <TextBlock x:Name="SettingsFeedback" FontSize="12" VerticalAlignment="Center" />
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button Style="{StaticResource SecondaryButton}" Content="测试连接" Margin="0,0,10,0"
+                                                    Click="SettingsTestConnection_Click" />
+                                            <Button Style="{StaticResource PrimaryButton}" Content="保存 AI 设置" Click="SaveSettings_Click" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+
+                        <Grid x:Name="AboutPage" Visibility="Collapsed" Opacity="0">
+                            <StackPanel Width="520" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Border Width="52" Height="52" Background="#F4F4F4" CornerRadius="14" HorizontalAlignment="Left">
+                                    <controls:FluentIcon Kind="Document" Width="23" Height="23"
+                                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="题目整理" FontSize="28" FontWeight="SemiBold" Margin="0,24,0,8" />
+                                <TextBlock Text="版本 1.0.0" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                                <TextBlock Text="利用 AI 自动整理数学题目的 Windows 桌面软件。"
+                                           FontSize="14" Margin="0,24,0,24" />
+                                <Button Style="{StaticResource SecondaryButton}" Content="检查更新" HorizontalAlignment="Left"
+                                        Click="CheckUpdates_Click" />
+                                <TextBlock x:Name="UpdateFeedback" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,0" />
+                            </StackPanel>
+                        </Grid>
+
+                    </Grid>
+
+                    <Border x:Name="LogSidebar" Grid.Column="2" Background="{StaticResource SideBrush}"
+                            BorderBrush="#EAEAEA" BorderThickness="1,0,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="52" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Button x:Name="LogToggleButton" Style="{StaticResource IconButton}" HorizontalAlignment="Right" Margin="0,8,4,8"
+                                    ToolTip="展开运行日志" Click="ToggleLog_Click">
+                                <controls:FluentIcon x:Name="LogChevron" Kind="ArrowLeft" Width="15" Height="15" />
+                            </Button>
+                            <TextBlock x:Name="LogTitle" Text="运行日志" FontSize="13" FontWeight="SemiBold"
+                                       Margin="16,0,48,0" VerticalAlignment="Center" Visibility="Collapsed" />
+                            <ListBox x:Name="LogList" Grid.Row="1" Visibility="Collapsed" BorderThickness="0"
+                                     Background="Transparent" Padding="10,8" FontSize="11" Foreground="#555555"
+                                     HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="4,5" />
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="AiInstructionsOverlay" Visibility="Collapsed" Background="#59000000" Panel.ZIndex="20">
+                    <Border Width="560" Height="410" MaxWidth="760" Margin="24" Background="#FFFFFF"
+                            BorderBrush="#DADADA" BorderThickness="1" CornerRadius="8"
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Grid Margin="28,24">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <TextBlock Text="AI 进一步要求" FontSize="20" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Style="{StaticResource IconButton}" HorizontalAlignment="Right"
+                                        ToolTip="关闭" Click="CancelAiInstructions_Click">
+                                    <controls:FluentIcon Kind="Dismiss" Width="15" Height="15" />
+                                </Button>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Text="用于当前项目的识别、公式整理和图形重绘" FontSize="12"
+                                       Foreground="{StaticResource MutedBrush}" Margin="0,8,0,16" />
+                            <TextBox x:Name="AiInstructionsEditor" Grid.Row="2" AcceptsReturn="True" MaxLength="2000"
+                                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="13,11"
+                                     VerticalContentAlignment="Top" Background="#FFFFFF"
+                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" />
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                                <Button Style="{StaticResource SecondaryButton}" Content="取消" Margin="0,0,10,0"
+                                        Click="CancelAiInstructions_Click" />
+                                <Button Style="{StaticResource PrimaryButton}" Content="保存要求"
+                                        Click="SaveAiInstructions_Click" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="NoticeOverlay" Visibility="Collapsed" Background="#59000000" Panel.ZIndex="30">
+                    <Border Width="440" MaxWidth="640" Margin="24" Padding="26,24" Background="#FFFFFF"
+                            BorderBrush="#DADADA" BorderThickness="1" CornerRadius="8"
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <TextBlock x:Name="NoticeTitle" FontSize="18" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Style="{StaticResource IconButton}" HorizontalAlignment="Right"
+                                        ToolTip="关闭" Click="CloseNotice_Click">
+                                    <controls:FluentIcon Kind="Dismiss" Width="15" Height="15" />
+                                </Button>
+                            </Grid>
+                            <TextBlock x:Name="NoticeMessage" Grid.Row="1" TextWrapping="Wrap"
+                                       Foreground="{StaticResource MutedBrush}" LineHeight="22" Margin="0,18,0,24" />
+                            <Button Grid.Row="2" Style="{StaticResource PrimaryButton}" Content="知道了"
+                                    HorizontalAlignment="Right" Click="CloseNotice_Click" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
