@@ -512,6 +512,15 @@
                                                 <CheckBox x:Name="OutputJsonBox" Style="{StaticResource ModernCheckBox}" Content="JSON"
                                                           Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
                                             </WrapPanel>
+                                            <TextBlock Text="图形处理" Style="{StaticResource LabelText}" Margin="0,4,0,7" />
+                                            <ComboBox x:Name="FigureModeBox" Style="{StaticResource ModernComboBox}" Height="34"
+                                                      SelectionChanged="FigureModeBox_SelectionChanged">
+                                                <ComboBoxItem Content="AI 重绘为 SVG（默认）" Tag="AiRedraw" />
+                                                <ComboBoxItem Content="外部工具优先，失败保留原图" Tag="ExternalToolThenOriginalImage" />
+                                                <ComboBoxItem Content="不重绘，直接保留原图" Tag="OriginalImage" />
+                                            </ComboBox>
+                                            <TextBlock x:Name="FigureModeHintText" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                       Margin="0,7,0,12" TextWrapping="Wrap" />
                                             <CheckBox x:Name="AppendWordBox" Style="{StaticResource ModernCheckBox}" Content="追加到现有 Word 文档"
                                                       Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
                                             <Grid>

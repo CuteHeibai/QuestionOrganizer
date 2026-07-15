@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using System.Net;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using EaxmBuilder.AI;
 using EaxmBuilder.Core;
 using EaxmBuilder.Export;
@@ -103,8 +107,7 @@ public sealed class ProcessingTaskManager(
 
             case TaskStep.FigureRedraw:
                 var figureDocument = await RequireDataAsync<QuestionDocument>(project, "document.json");
-                var figures = await aiProvider.RedrawFiguresAsync(
-                    project.SourcePath, figureDocument, project.AiInstructions, cancellationToken);
+                var figures = await CreateFiguresAsync(project, figureDocument, cancellationToken);
                 figureDocument.Figures = figures.ToList();
                 await SvgWriter.WriteAllAsync(project, figures, cancellationToken);
                 await repository.SaveDataAsync(project, "document.json", figureDocument);
@@ -121,6 +124,180 @@ public sealed class ProcessingTaskManager(
                 await exporter.ExportAsync(project, exportDocument, cancellationToken);
                 break;
         }
+    }
+
+    private async Task<IReadOnlyList<FigureDocument>> CreateFiguresAsync(
+        QuestionProject project,
+        QuestionDocument document,
+        CancellationToken cancellationToken)
+    {
+        if (document.Blocks.All(block => block.Type != QuestionBlockType.Figure)) return [];
+
+        if (project.FigureMode == FigureProcessingMode.AiRedraw)
+            return await aiProvider.RedrawFiguresAsync(
+                project.SourcePath, document, project.AiInstructions, cancellationToken);
+
+        if (project.FigureMode == FigureProcessingMode.ExternalToolThenOriginalImage)
+        {
+            var externalFigures = await TryCreateFiguresWithExternalToolAsync(project, document, cancellationToken);
+            if (externalFigures.Count > 0) return externalFigures;
+            LogAdded?.Invoke("外部图形工具不可用或未产出 SVG，已回退为原图保留。");
+        }
+
+        return await CreateOriginalImageFiguresAsync(project, document, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FigureDocument>> TryCreateFiguresWithExternalToolAsync(
+        QuestionProject project,
+        QuestionDocument document,
+        CancellationToken cancellationToken)
+    {
+        var toolPath = Environment.GetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL");
+        if (string.IsNullOrWhiteSpace(toolPath) || !File.Exists(toolPath)) return [];
+
+        try
+        {
+            var documentPath = Path.Combine(project.DirectoryPath, "document.json");
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = toolPath,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            process.StartInfo.ArgumentList.Add(project.SourcePath);
+            process.StartInfo.ArgumentList.Add(documentPath);
+            process.StartInfo.ArgumentList.Add(project.DirectoryPath);
+            process.Start();
+            await process.WaitForExitAsync(cancellationToken);
+            if (process.ExitCode != 0) return [];
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return [];
+        }
+
+        var figures = new List<FigureDocument>();
+        foreach (var id in GetFigureIds(document))
+        {
+            var path = Path.Combine(project.DirectoryPath, SanitizeFigureId(id) + ".svg");
+            if (!File.Exists(path)) continue;
+            figures.Add(new FigureDocument
+            {
+                Id = id,
+                Description = "外部工具绘制",
+                Svg = await File.ReadAllTextAsync(path, cancellationToken)
+            });
+        }
+        return figures;
+    }
+
+    private static async Task<IReadOnlyList<FigureDocument>> CreateOriginalImageFiguresAsync(
+        QuestionProject project,
+        QuestionDocument document,
+        CancellationToken cancellationToken)
+    {
+        var sourceSvg = await CreateSourceImageSvgAsync(project.SourcePath, cancellationToken);
+        return GetFigureIds(document)
+            .Select(id => new FigureDocument
+            {
+                Id = id,
+                Description = "原图保留，未进行 AI 重绘",
+                Svg = sourceSvg
+            })
+            .ToList();
+    }
+
+    private static async Task<string> CreateSourceImageSvgAsync(string sourcePath, CancellationToken cancellationToken)
+    {
+        var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+        if (extension is not ".png" and not ".jpg" and not ".jpeg")
+        {
+            return """
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0,0,640,160">
+                  <rect width="640" height="160" fill="#ffffff"/>
+                  <text x="24" y="84" font-family="SimSun, 宋体, serif" font-size="20" fill="#202020">原文件为 PDF，当前无法直接嵌入裁切图，请改用 AI 重绘或外部工具。</text>
+                </svg>
+                """;
+        }
+
+        var bytes = await File.ReadAllBytesAsync(sourcePath, cancellationToken);
+        var bounds = ReadImageBounds(sourcePath);
+        var mediaType = extension == ".png" ? "image/png" : "image/jpeg";
+        var encoded = Convert.ToBase64String(bytes);
+        var safeName = WebUtility.HtmlEncode(Path.GetFileName(sourcePath));
+        return $"""
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="{bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}" overflow="hidden">
+              <title>{safeName}</title>
+              <image href="data:{mediaType};base64,{encoded}" x="0" y="0" width="{bounds.SourceWidth}" height="{bounds.SourceHeight}" preserveAspectRatio="none"/>
+            </svg>
+            """;
+    }
+
+    private static SourceImageBounds ReadImageBounds(string path)
+    {
+        var decoder = BitmapDecoder.Create(new Uri(path, UriKind.Absolute),
+            BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        BitmapSource source = decoder.Frames[0];
+        if (source.Format != PixelFormats.Bgra32)
+            source = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+
+        var width = Math.Max(1, source.PixelWidth);
+        var height = Math.Max(1, source.PixelHeight);
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        source.CopyPixels(pixels, stride, 0);
+
+        var minX = width;
+        var minY = height;
+        var maxX = -1;
+        var maxY = -1;
+        for (var y = 0; y < height; y++)
+        {
+            var row = y * stride;
+            for (var x = 0; x < width; x++)
+            {
+                var index = row + x * 4;
+                var blue = pixels[index];
+                var green = pixels[index + 1];
+                var red = pixels[index + 2];
+                var alpha = pixels[index + 3];
+                if (alpha < 16 || red > 245 && green > 245 && blue > 245) continue;
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
+        }
+
+        if (maxX < 0) return new SourceImageBounds(0, 0, width, height, width, height);
+
+        const int padding = 8;
+        minX = Math.Max(0, minX - padding);
+        minY = Math.Max(0, minY - padding);
+        maxX = Math.Min(width - 1, maxX + padding);
+        maxY = Math.Min(height - 1, maxY + padding);
+        return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
+    }
+
+    private sealed record SourceImageBounds(int X, int Y, int Width, int Height, int SourceWidth, int SourceHeight);
+
+    private static IReadOnlyList<string> GetFigureIds(QuestionDocument document) =>
+        document.Blocks
+            .Where(block => block.Type == QuestionBlockType.Figure)
+            .Select(block => block.FigureId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static string SanitizeFigureId(string value)
+    {
+        var safe = new string(value.Where(character => char.IsLetterOrDigit(character) || character == '-').ToArray());
+        return string.IsNullOrWhiteSpace(safe) ? "figure" : safe;
     }
 
     private async Task ReviewOutputsAsync(QuestionProject project, CancellationToken cancellationToken)
@@ -226,7 +403,7 @@ public sealed class ProcessingTaskManager(
     {
         TaskStep.Ocr => "OCR",
         TaskStep.FormulaRecognition => "公式识别",
-        TaskStep.FigureRedraw => "图形重绘",
+        TaskStep.FigureRedraw => "图形处理",
         TaskStep.WordExport => "Word",
         TaskStep.PdfExport => "PDF",
         TaskStep.LatexExport => "LaTeX",
@@ -239,7 +416,7 @@ public sealed class ProcessingTaskManager(
     {
         TaskStep.Ocr => "开始 OCR...",
         TaskStep.FormulaRecognition => "识别公式...",
-        TaskStep.FigureRedraw => "生成 SVG...",
+        TaskStep.FigureRedraw => "处理图形...",
         TaskStep.AiReview => "AI 检查生成文件...",
         _ => $"生成 {DisplayName(step)}..."
     };

@@ -10,6 +10,17 @@ dotnet run --project src/EaxmBuilder.App
 
 首次启动会进入 AI 服务配置。当前支持 OpenAI、火山豆包和兼容 OpenAI API 的服务。
 
+## 打包
+
+项目发布为解压即用的 ZIP 包，不再使用 `Install.ps1` / `Uninstall.ps1`。
+
+```powershell
+dotnet publish src/EaxmBuilder.App -c Release -r win-x64 --self-contained true -o artifacts\QuestionOrganizer-win-x64
+tar -a -c -f artifacts\QuestionOrganizer-win-x64.zip -C artifacts\QuestionOrganizer-win-x64 .
+```
+
+用户解压 ZIP 后直接运行 `QuestionOrganizer.exe`；卸载时删除解压目录即可。
+
 ## 数据位置
 
 - 应用设置：`%LOCALAPPDATA%\QuestionOrganizer\settings.json`

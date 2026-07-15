@@ -14,6 +14,7 @@ using EaxmBuilder.Services;
 
 var output = Path.Combine(Path.GetTempPath(), "QuestionOrganizer-Smoke-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(output);
+var previousFigureTool = Environment.GetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL");
 
 try
 {
@@ -89,6 +90,9 @@ try
 
     project.Steps[TaskStep.Ocr].State = StepState.Running;
     await repository.SaveAsync(project);
+    reloaded = (await repository.GetRecentAsync(output, activeProjectIds: new HashSet<Guid> { project.Id })).Single();
+    if (reloaded.Steps[TaskStep.Ocr].State != StepState.Running)
+        throw new InvalidOperationException("当前仍在运行的项目被错误显示为任务中断。");
     reloaded = (await repository.GetRecentAsync(output)).Single();
     if (reloaded.Steps[TaskStep.Ocr].State != StepState.Failed)
         throw new InvalidOperationException("中断的运行状态未恢复为可重试状态。");
@@ -120,6 +124,52 @@ try
         throw new InvalidOperationException("按输出选项跳过导出步骤失败。");
     if (!File.Exists(Path.Combine(selectedOutputDirectory, "review.json")))
         throw new InvalidOperationException("AI 复核步骤未生成 review.json。");
+
+    var originalFigureDirectory = Path.Combine(output, "original-figure");
+    Directory.CreateDirectory(originalFigureDirectory);
+    await File.WriteAllBytesAsync(
+        Path.Combine(originalFigureDirectory, "source.png"),
+        Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="));
+    var originalFigureProject = new QuestionProject
+    {
+        Name = "OriginalFigure",
+        DirectoryPath = originalFigureDirectory,
+        SourceFileName = "source.png",
+        FigureMode = FigureProcessingMode.OriginalImage
+    };
+    originalFigureProject.Steps[TaskStep.Ocr].State = StepState.Completed;
+    originalFigureProject.Steps[TaskStep.FormulaRecognition].State = StepState.Completed;
+    await repository.SaveDataAsync(originalFigureProject, "document.json", document);
+    var figureFakeAi = new FakeAiProvider();
+    var figureSucceeded = await new ProcessingTaskManager(
+            repository,
+            figureFakeAi,
+            [new DocxExporter(), new PdfExporter(), new LatexExporter(), new JsonExporter()])
+        .RunStepAsync(originalFigureProject, TaskStep.FigureRedraw);
+    var originalFigureSvg = await File.ReadAllTextAsync(Path.Combine(originalFigureDirectory, "figure1.svg"));
+    if (!figureSucceeded ||
+        figureFakeAi.RedrawCallCount != 0 ||
+        !originalFigureSvg.Contains("data:image/png;base64", StringComparison.Ordinal))
+        throw new InvalidOperationException("原图保留模式未正确跳过 AI 重绘并生成可导出的 SVG。");
+    Environment.SetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL", Path.Combine(output, "missing-tool.exe"));
+    var externalFallbackProject = new QuestionProject
+    {
+        Name = "ExternalFallbackFigure",
+        DirectoryPath = originalFigureDirectory,
+        SourceFileName = "source.png",
+        FigureMode = FigureProcessingMode.ExternalToolThenOriginalImage
+    };
+    externalFallbackProject.Steps[TaskStep.Ocr].State = StepState.Completed;
+    externalFallbackProject.Steps[TaskStep.FormulaRecognition].State = StepState.Completed;
+    await repository.SaveDataAsync(externalFallbackProject, "document.json", document);
+    var externalFakeAi = new FakeAiProvider();
+    var externalSucceeded = await new ProcessingTaskManager(
+            repository,
+            externalFakeAi,
+            [new DocxExporter(), new PdfExporter(), new LatexExporter(), new JsonExporter()])
+        .RunStepAsync(externalFallbackProject, TaskStep.FigureRedraw);
+    if (!externalSucceeded || externalFakeAi.RedrawCallCount != 0)
+        throw new InvalidOperationException("外部工具失败时未回退到原图保留模式。");
 
     Exception? animationError = null;
     var animationThread = new Thread(() =>
@@ -162,6 +212,14 @@ try
         throw new InvalidOperationException("官方、兼容与豆包 API 的路由规则不正确。");
     if (Enum.IsDefined(typeof(AiProviderKind), 2))
         throw new InvalidOperationException("DeepSeek 旧枚举值不应再作为可选 AI 提供商。");
+    var deserializeJson = typeof(OpenAiProvider).GetMethod("DeserializeJsonContent",
+            BindingFlags.Static | BindingFlags.NonPublic)
+        ?.MakeGenericMethod(typeof(OutputReviewResult))
+        ?? throw new InvalidOperationException("无法检查 AI JSON 容错解析。");
+    var wrappedReview = (OutputReviewResult?)deserializeJson.Invoke(null,
+        ["说明：下面是复核结果。\n```json\n{\"passed\":true,\"summary\":\"ok\",\"issues\":[],\"correctedDocument\":null}\n```\n已完成。"]);
+    if (wrappedReview is null || !wrappedReview.Passed || wrappedReview.Summary != "ok")
+        throw new InvalidOperationException("AI 复核 JSON 外包文字未能被容错解析。");
     try
     {
         _ = new AiProviderFactory(new SettingsStore()).Create(new AppSettings
@@ -197,7 +255,7 @@ try
         settingsStore.ReadApiKey(profileSettings, AiProviderKind.Doubao) != "doubao-key")
         throw new InvalidOperationException("每个 AI 供应商未能保存独立 API Key。");
     if (typeof(DocxExporter).Assembly.GetManifestResourceStream("EaxmBuilder.Assets.default-template.docx") is not { } templateResource)
-        throw new InvalidOperationException("内置 Word 模板未嵌入程序，单文件安装包会缺少默认模板。");
+        throw new InvalidOperationException("内置 Word 模板未嵌入程序，ZIP 包会缺少默认模板。");
     templateResource.Dispose();
 
     var createResponsesRequest = typeof(OpenAiProvider).GetMethod("CreateResponsesRequest",
@@ -353,11 +411,14 @@ try
 }
 finally
 {
+    Environment.SetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL", previousFigureTool);
     Directory.Delete(output, true);
 }
 
 internal sealed class FakeAiProvider : IAiProvider
 {
+    public int RedrawCallCount { get; private set; }
+
     public Task TestConnectionAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<OcrResult> RecognizeTextAsync(
@@ -378,7 +439,13 @@ internal sealed class FakeAiProvider : IAiProvider
         QuestionDocument document,
         string additionalInstructions,
         CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<FigureDocument>>([]);
+        Task.FromResult<IReadOnlyList<FigureDocument>>(OnRedrawFigures());
+
+    private IReadOnlyList<FigureDocument> OnRedrawFigures()
+    {
+        RedrawCallCount++;
+        return [];
+    }
 
     public Task<OutputReviewResult> ReviewOutputsAsync(
         string sourcePath,

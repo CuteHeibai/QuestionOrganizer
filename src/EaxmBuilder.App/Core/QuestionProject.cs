@@ -25,6 +25,14 @@ public enum StepState
     Skipped
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum FigureProcessingMode
+{
+    AiRedraw,
+    ExternalToolThenOriginalImage,
+    OriginalImage
+}
+
 public sealed class StepRecord
 {
     public StepState State { get; set; } = StepState.Pending;
@@ -41,6 +49,7 @@ public sealed class QuestionProject
     public string SourceFileName { get; set; } = string.Empty;
     public string AiInstructions { get; set; } = string.Empty;
     public OutputSelection OutputSelection { get; set; } = new();
+    public FigureProcessingMode FigureMode { get; set; } = FigureProcessingMode.AiRedraw;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
     public Dictionary<TaskStep, StepRecord> Steps { get; set; } = Enum

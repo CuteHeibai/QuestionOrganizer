@@ -503,7 +503,10 @@ public partial class MainWindow : Window
 
     private async Task LoadProjectsAsync()
     {
-        var projects = await _projectRepository.GetRecentAsync(_settings.OutputDirectory, 200);
+        var projects = await _projectRepository.GetRecentAsync(
+            _settings.OutputDirectory,
+            200,
+            _runningProjects.Keys.ToHashSet());
         AllProjectsList.ItemsSource = projects;
         NoProjectsText.Visibility = projects.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -668,6 +671,8 @@ public partial class MainWindow : Window
             OutputPdfBox.IsChecked = project.OutputSelection.Pdf;
             OutputLatexBox.IsChecked = project.OutputSelection.Latex;
             OutputJsonBox.IsChecked = project.OutputSelection.Json;
+            SelectFigureMode(project.FigureMode);
+            UpdateFigureModeHint(project.FigureMode);
             AppendWordBox.IsChecked = project.OutputSelection.AppendToWord;
             AppendWordTargetBox.Text = project.OutputSelection.AppendToWordPath;
             AppendWordTargetBox.IsEnabled = project.OutputSelection.AppendToWord;
@@ -681,6 +686,13 @@ public partial class MainWindow : Window
     private async void OutputOption_Changed(object sender, RoutedEventArgs e)
     {
         if (_isPopulatingProjectOptions || _currentProject is null) return;
+        await SaveProjectOutputOptionsAsync();
+    }
+
+    private async void FigureModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulatingProjectOptions || _currentProject is null) return;
+        UpdateFigureModeHint(ReadSelectedFigureMode());
         await SaveProjectOutputOptionsAsync();
     }
 
@@ -716,12 +728,15 @@ public partial class MainWindow : Window
         var oldLatex = _currentProject.OutputSelection.Latex;
         var oldJson = _currentProject.OutputSelection.Json;
         var oldAppendPath = _currentProject.OutputSelection.AppendToWordPath;
+        var oldFigureMode = _currentProject.FigureMode;
         _currentProject.OutputSelection.Word = OutputWordBox.IsChecked == true;
         _currentProject.OutputSelection.Pdf = OutputPdfBox.IsChecked == true;
         _currentProject.OutputSelection.Latex = OutputLatexBox.IsChecked == true;
         _currentProject.OutputSelection.Json = OutputJsonBox.IsChecked == true;
         _currentProject.OutputSelection.AppendToWordPath = appendPath;
+        _currentProject.FigureMode = ReadSelectedFigureMode();
         AppendWordTargetBox.IsEnabled = AppendWordBox.IsChecked == true;
+        NormalizeFigureSteps(_currentProject, oldFigureMode != _currentProject.FigureMode);
         NormalizeExportStep(
             _currentProject,
             TaskStep.WordExport,
@@ -733,6 +748,56 @@ public partial class MainWindow : Window
         NormalizeExportStep(_currentProject, TaskStep.JsonExport, oldJson != _currentProject.OutputSelection.Json, _currentProject.OutputSelection.Json);
         await _projectRepository.SaveAsync(_currentProject);
         RefreshProjectView(_currentProject);
+    }
+
+    private void SelectFigureMode(FigureProcessingMode mode)
+    {
+        foreach (var item in FigureModeBox.Items.OfType<ComboBoxItem>())
+        {
+            if (!string.Equals(item.Tag?.ToString(), mode.ToString(), StringComparison.Ordinal)) continue;
+            FigureModeBox.SelectedItem = item;
+            return;
+        }
+        FigureModeBox.SelectedIndex = 0;
+    }
+
+    private FigureProcessingMode ReadSelectedFigureMode()
+    {
+        if (FigureModeBox.SelectedItem is ComboBoxItem item &&
+            Enum.TryParse<FigureProcessingMode>(item.Tag?.ToString(), out var mode))
+            return mode;
+        return FigureProcessingMode.AiRedraw;
+    }
+
+    private void UpdateFigureModeHint(FigureProcessingMode mode)
+    {
+        FigureModeHintText.Text = mode switch
+        {
+            FigureProcessingMode.AiRedraw => "AI 会生成可缩放 SVG，适合几何图和函数图；复杂绳结或拓扑图可能需要人工复核。",
+            FigureProcessingMode.ExternalToolThenOriginalImage => "先尝试 QUESTION_ORGANIZER_FIGURE_TOOL 指定的外部绘图工具；未配置或失败时自动保留原图，避免流程卡住。",
+            FigureProcessingMode.OriginalImage => "跳过 AI 重绘，直接把源图作为图形保留。最接近原题，但不是可编辑矢量图；多图精确裁切仍需后续坐标识别。",
+            _ => string.Empty
+        };
+    }
+
+    private static void NormalizeFigureSteps(QuestionProject project, bool changed)
+    {
+        if (!changed) return;
+        ResetStep(project, TaskStep.FigureRedraw);
+        if (project.OutputSelection.Word || project.OutputSelection.AppendToWord) ResetStep(project, TaskStep.WordExport);
+        if (project.OutputSelection.Pdf) ResetStep(project, TaskStep.PdfExport);
+        if (project.OutputSelection.Latex) ResetStep(project, TaskStep.LatexExport);
+        if (project.OutputSelection.Json) ResetStep(project, TaskStep.JsonExport);
+        if (project.OutputSelection.HasAnyOutput) ResetStep(project, TaskStep.AiReview);
+    }
+
+    private static void ResetStep(QuestionProject project, TaskStep step)
+    {
+        var record = project.Steps[step];
+        if (record.State == StepState.Running) return;
+        record.State = StepState.Pending;
+        record.Error = string.Empty;
+        record.CompletedAt = null;
     }
 
     private static void NormalizeExportStep(
@@ -945,7 +1010,9 @@ public partial class MainWindow : Window
 
     private async Task LoadRecentAsync()
     {
-        var recent = await _projectRepository.GetRecentAsync(_settings.OutputDirectory);
+        var recent = await _projectRepository.GetRecentAsync(
+            _settings.OutputDirectory,
+            activeProjectIds: _runningProjects.Keys.ToHashSet());
         RecentProjectsList.ItemsSource = recent;
         NoRecentText.Visibility = recent.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }

@@ -41,7 +41,10 @@ public sealed class ProjectRepository
         await JsonSerializer.SerializeAsync(stream, project, JsonOptions);
     }
 
-    public async Task<IReadOnlyList<QuestionProject>> GetRecentAsync(string outputRoot, int count = 8)
+    public async Task<IReadOnlyList<QuestionProject>> GetRecentAsync(
+        string outputRoot,
+        int count = 8,
+        IReadOnlySet<Guid>? activeProjectIds = null)
     {
         if (!Directory.Exists(outputRoot)) return [];
 
@@ -56,10 +59,13 @@ public sealed class ProjectRepository
                 {
                     project.DirectoryPath = Path.GetDirectoryName(path)!;
                     EnsureAllSteps(project);
-                    foreach (var record in project.Steps.Values.Where(item => item.State == StepState.Running))
+                    if (activeProjectIds?.Contains(project.Id) != true)
                     {
-                        record.State = StepState.Failed;
-                        record.Error = "上次运行意外中断，可以重新执行。";
+                        foreach (var record in project.Steps.Values.Where(item => item.State == StepState.Running))
+                        {
+                            record.State = StepState.Failed;
+                            record.Error = "上次运行意外中断，可以重新执行。";
+                        }
                     }
                     projects.Add(project);
                 }

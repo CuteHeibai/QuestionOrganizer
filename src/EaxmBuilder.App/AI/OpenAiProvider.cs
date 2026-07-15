@@ -122,7 +122,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             重点检查：
             1. 题干、选项、编号、标点、数学公式是否与原图一致；
             2. LaTeX 是否仍残留为未解析代码，或需要补充 latexSymbolMap；
-            3. 图形 SVG 是否缺失、错位、误把原图截图嵌入、文字字体不符合宋体要求；
+            3. 图形 SVG 是否缺失、错位、文字字体不符合宋体要求；如果图形 description 标明“原图保留”，不要把嵌入原图本身判为错误；
             4. Word/PDF/HTML/LaTeX 输出底稿是否有明显排版风险。
 
             如果发现错误，请在 correctedDocument 中返回完整修正后的 QuestionDocument；
@@ -247,17 +247,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
                 $"AI 请求超过 {RequestTimeout.TotalMinutes:0} 分钟仍未完成。可以稍后单独重试本步骤，或换用响应更快的模型。",
                 exception);
         }
-        content = StripCodeFence(content);
-
-        try
-        {
-            return JsonSerializer.Deserialize<T>(content, JsonOptions)
-                   ?? throw new InvalidOperationException("AI 返回了空 JSON。");
-        }
-        catch (JsonException exception)
-        {
-            throw new InvalidOperationException("AI 返回的结构化数据无法解析。", exception);
-        }
+        return DeserializeJsonContent<T>(content);
     }
 
     private object CreateResponsesRequest(string sourcePath, string dataUrl, string prompt)
@@ -496,11 +486,15 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         if (value.ValueKind != JsonValueKind.Object) return false;
 
         foreach (var propertyName in new[]
-                 { "output_text", "content", "text", "answer", "value", "message", "final_output", "completion" })
+                 { "output_text", "content", "text", "answer", "value", "message", "final_output", "completion", "parsed", "json" })
         {
-            if (value.TryGetProperty(propertyName, out var property) &&
-                TryReadContent(property, out result))
+            if (!value.TryGetProperty(propertyName, out var property)) continue;
+            if (TryReadContent(property, out result)) return true;
+            if (property.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+            {
+                result = property.GetRawText();
                 return true;
+            }
         }
         return false;
     }
@@ -508,7 +502,85 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
     private static bool LooksLikeJson(string value)
     {
         var candidate = StripCodeFence(value).Trim();
-        return candidate.StartsWith('{') && candidate.EndsWith('}');
+        return (candidate.StartsWith('{') && candidate.EndsWith('}')) ||
+               TryExtractJsonObject(candidate, out _);
+    }
+
+    private static T DeserializeJsonContent<T>(string value)
+    {
+        var primary = StripCodeFence(value);
+        var candidates = new List<string> { primary };
+        if (TryExtractJsonObject(primary, out var extracted) &&
+            !string.Equals(primary, extracted, StringComparison.Ordinal))
+            candidates.Add(extracted);
+
+        JsonException? lastException = null;
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<T>(candidate, JsonOptions)
+                       ?? throw new InvalidOperationException("AI 返回了空 JSON。");
+            }
+            catch (JsonException exception)
+            {
+                lastException = exception;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "AI 返回的结构化数据无法解析。已尝试从响应中抽取完整 JSON，请重试本步骤；如果仍失败，请在 AI 要求中写明“只返回 JSON，不要解释”。",
+            lastException);
+    }
+
+    private static bool TryExtractJsonObject(string value, out string json)
+    {
+        json = string.Empty;
+        var text = StripCodeFence(value);
+        var start = text.IndexOf('{');
+        if (start < 0) return false;
+
+        var depth = 0;
+        var inString = false;
+        var escaping = false;
+        for (var index = start; index < text.Length; index++)
+        {
+            var current = text[index];
+            if (inString)
+            {
+                if (escaping)
+                {
+                    escaping = false;
+                }
+                else if (current == '\\')
+                {
+                    escaping = true;
+                }
+                else if (current == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (current == '"')
+            {
+                inString = true;
+                continue;
+            }
+            if (current == '{')
+            {
+                depth++;
+                continue;
+            }
+            if (current != '}') continue;
+
+            depth--;
+            if (depth != 0) continue;
+            json = text[start..(index + 1)].Trim();
+            return true;
+        }
+        return false;
     }
 
     private static string DescribeFields(JsonElement value)
