@@ -457,8 +457,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), text)));
 
     private static XElement CreateParagraph(string text) =>
-        new(W + "p", ParagraphProperties(),
-            CreateTextRun(text));
+        new(W + "p", ParagraphProperties(), CreateTextRun(text));
 
     private static XElement CreateFormula(string latex, IReadOnlyDictionary<string, string> latexSymbolMap) =>
         new(W + "p", ParagraphProperties(), CreateMathRun(latex, latexSymbolMap));
@@ -508,7 +507,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 text = $"{questionNumber.TrimEnd('.', '．', '、')}. {text}";
             }
             if (!string.IsNullOrWhiteSpace(text)) numberPlaced = true;
-            paragraph.Add(CreateTextRun(text));
+            paragraph.Add(CreateTextRuns(text, latexSymbolMap));
         }
         return paragraph;
     }
@@ -517,13 +516,62 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         new(W + "r", RunProperties(),
             new XElement(W + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), text));
 
+    private static IEnumerable<XElement> CreateTextRuns(
+        string text,
+        IReadOnlyDictionary<string, string> latexSymbolMap)
+    {
+        foreach (var segment in MathTextFormatter.ToMathSegments(text, latexSymbolMap))
+        {
+            yield return segment.Kind switch
+            {
+                MathTextFormatter.SegmentKind.Fraction => CreateMathObject(CreateMathFraction(segment, latexSymbolMap)),
+                MathTextFormatter.SegmentKind.Radical => CreateMathObject(CreateMathRadical(segment, latexSymbolMap)),
+                _ => CreateTextRun(segment.Text)
+            };
+        }
+    }
+
     private static XElement CreateMathRun(string latex, IReadOnlyDictionary<string, string> latexSymbolMap) =>
-        new(M + "oMath",
-            new XElement(M + "r",
-                new XElement(M + "rPr", new XElement(M + "sty", new XAttribute(M + "val", "p"))),
-                new XElement(M + "t",
-                    new XAttribute(XNamespace.Xml + "space", "preserve"),
-                    MathTextFormatter.ToDisplayText(latex, latexSymbolMap))));
+        CreateMathObject(CreateMathElements(latex, latexSymbolMap));
+
+    private static XElement CreateMathObject(params object[] content) =>
+        new(M + "oMath", content);
+
+    private static object[] CreateMathElements(string value, IReadOnlyDictionary<string, string> latexSymbolMap) =>
+        MathTextFormatter.ToMathSegments(value, latexSymbolMap, stripMathDelimiters: true)
+            .Select<MathTextFormatter.MathSegment, object>(segment => segment.Kind switch
+            {
+                MathTextFormatter.SegmentKind.Fraction => CreateMathFraction(segment, latexSymbolMap),
+                MathTextFormatter.SegmentKind.Radical => CreateMathRadical(segment, latexSymbolMap),
+                _ => CreateMathTextRun(segment.Text)
+            })
+            .ToArray();
+
+    private static XElement CreateMathTextRun(string text) =>
+        new(M + "r",
+            new XElement(M + "rPr", new XElement(M + "sty", new XAttribute(M + "val", "p"))),
+            new XElement(M + "t", new XAttribute(XNamespace.Xml + "space", "preserve"), text));
+
+    private static XElement CreateMathFraction(
+        MathTextFormatter.MathSegment segment,
+        IReadOnlyDictionary<string, string> latexSymbolMap) =>
+        new(M + "f",
+            new XElement(M + "num", CreateMathElements(segment.Numerator, latexSymbolMap)),
+            new XElement(M + "den", CreateMathElements(segment.Denominator, latexSymbolMap)));
+
+    private static XElement CreateMathRadical(
+        MathTextFormatter.MathSegment segment,
+        IReadOnlyDictionary<string, string> latexSymbolMap)
+    {
+        var properties = string.IsNullOrWhiteSpace(segment.Degree)
+            ? new XElement(M + "radPr", new XElement(M + "degHide", new XAttribute(M + "val", "1")))
+            : new XElement(M + "radPr");
+        var radical = new XElement(M + "rad", properties);
+        if (!string.IsNullOrWhiteSpace(segment.Degree))
+            radical.Add(new XElement(M + "deg", CreateMathElements(segment.Degree, latexSymbolMap)));
+        radical.Add(new XElement(M + "e", CreateMathElements(segment.Radicand, latexSymbolMap)));
+        return radical;
+    }
 
     private static bool StartsNewParagraph(QuestionBlock block)
     {

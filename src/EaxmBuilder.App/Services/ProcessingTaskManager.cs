@@ -139,12 +139,46 @@ public sealed class ProcessingTaskManager(
 
         if (project.FigureMode == FigureProcessingMode.ExternalToolThenOriginalImage)
         {
-            var externalFigures = await TryCreateFiguresWithExternalToolAsync(project, document, cancellationToken);
+            var externalFigures = await TryCreateFiguresWithGeoGebraAsync(project, document, cancellationToken);
             if (externalFigures.Count > 0) return externalFigures;
-            LogAdded?.Invoke("外部图形工具不可用或未产出 SVG，已回退为原图保留。");
+            externalFigures = await TryCreateFiguresWithExternalToolAsync(project, document, cancellationToken);
+            if (externalFigures.Count > 0) return externalFigures;
+            LogAdded?.Invoke("内嵌 GeoGebra/外部图形工具未产出 SVG，已回退为几何图裁剪。");
         }
 
         return await CreateOriginalImageFiguresAsync(project, document, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FigureDocument>> TryCreateFiguresWithGeoGebraAsync(
+        QuestionProject project,
+        QuestionDocument document,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<FigureDocument> commandFigures;
+        try
+        {
+            commandFigures = await aiProvider.CreateGeoGebraFiguresAsync(
+                project.SourcePath, document, project.AiInstructions, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogAdded?.Invoke($"GeoGebra 命令生成失败：{exception.Message}");
+            return [];
+        }
+
+        var figures = new List<FigureDocument>();
+        foreach (var figure in commandFigures)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rendered = await GeoGebraRenderer.RenderAsync(project, figure, cancellationToken);
+            if (rendered is not null) figures.Add(rendered);
+        }
+        if (figures.Count > 0) LogAdded?.Invoke("内嵌 GeoGebra 已生成图形。");
+        return figures;
     }
 
     private async Task<IReadOnlyList<FigureDocument>> TryCreateFiguresWithExternalToolAsync(
@@ -206,7 +240,7 @@ public sealed class ProcessingTaskManager(
             .Select(id => new FigureDocument
             {
                 Id = id,
-                Description = "原图保留，未进行 AI 重绘",
+                Description = "原图几何图裁剪，未进行 AI 重绘",
                 Svg = sourceSvg
             })
             .ToList();
@@ -252,10 +286,11 @@ public sealed class ProcessingTaskManager(
         var pixels = new byte[stride * height];
         source.CopyPixels(pixels, stride, 0);
 
-        var minX = width;
-        var minY = height;
-        var maxX = -1;
-        var maxY = -1;
+        var dark = new bool[width * height];
+        var fullMinX = width;
+        var fullMinY = height;
+        var fullMaxX = -1;
+        var fullMaxY = -1;
         for (var y = 0; y < height; y++)
         {
             var row = y * stride;
@@ -267,16 +302,39 @@ public sealed class ProcessingTaskManager(
                 var red = pixels[index + 2];
                 var alpha = pixels[index + 3];
                 if (alpha < 16 || red > 245 && green > 245 && blue > 245) continue;
-                minX = Math.Min(minX, x);
-                minY = Math.Min(minY, y);
-                maxX = Math.Max(maxX, x);
-                maxY = Math.Max(maxY, y);
+                dark[y * width + x] = true;
+                fullMinX = Math.Min(fullMinX, x);
+                fullMinY = Math.Min(fullMinY, y);
+                fullMaxX = Math.Max(fullMaxX, x);
+                fullMaxY = Math.Max(fullMaxY, y);
             }
         }
 
-        if (maxX < 0) return new SourceImageBounds(0, 0, width, height, width, height);
+        if (fullMaxX < 0) return new SourceImageBounds(0, 0, width, height, width, height);
 
-        const int padding = 8;
+        var largest = FindLargestComponentBounds(dark, width, height);
+        var minX = largest.Area >= Math.Max(32, width * height / 2000) &&
+                   largest.Width >= width / 8 &&
+                   largest.Height >= height / 12
+            ? largest.X
+            : fullMinX;
+        var minY = largest.Area >= Math.Max(32, width * height / 2000) &&
+                   largest.Width >= width / 8 &&
+                   largest.Height >= height / 12
+            ? largest.Y
+            : fullMinY;
+        var maxX = largest.Area >= Math.Max(32, width * height / 2000) &&
+                   largest.Width >= width / 8 &&
+                   largest.Height >= height / 12
+            ? largest.X + largest.Width - 1
+            : fullMaxX;
+        var maxY = largest.Area >= Math.Max(32, width * height / 2000) &&
+                   largest.Width >= width / 8 &&
+                   largest.Height >= height / 12
+            ? largest.Y + largest.Height - 1
+            : fullMaxY;
+
+        const int padding = 18;
         minX = Math.Max(0, minX - padding);
         minY = Math.Max(0, minY - padding);
         maxX = Math.Min(width - 1, maxX + padding);
@@ -284,7 +342,56 @@ public sealed class ProcessingTaskManager(
         return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
     }
 
+    private static ComponentBounds FindLargestComponentBounds(bool[] dark, int width, int height)
+    {
+        var visited = new bool[dark.Length];
+        var queue = new Queue<int>();
+        var best = new ComponentBounds(0, 0, width, height, 0);
+        for (var start = 0; start < dark.Length; start++)
+        {
+            if (!dark[start] || visited[start]) continue;
+
+            var area = 0;
+            var minX = width;
+            var minY = height;
+            var maxX = -1;
+            var maxY = -1;
+            visited[start] = true;
+            queue.Enqueue(start);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                var x = current % width;
+                var y = current / width;
+                area++;
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+
+                Enqueue(x - 1, y);
+                Enqueue(x + 1, y);
+                Enqueue(x, y - 1);
+                Enqueue(x, y + 1);
+            }
+
+            if (area > best.Area)
+                best = new ComponentBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, area);
+        }
+        return best;
+
+        void Enqueue(int x, int y)
+        {
+            if (x < 0 || y < 0 || x >= width || y >= height) return;
+            var index = y * width + x;
+            if (!dark[index] || visited[index]) return;
+            visited[index] = true;
+            queue.Enqueue(index);
+        }
+    }
+
     private sealed record SourceImageBounds(int X, int Y, int Width, int Height, int SourceWidth, int SourceHeight);
+    private sealed record ComponentBounds(int X, int Y, int Width, int Height, int Area);
 
     private static IReadOnlyList<string> GetFigureIds(QuestionDocument document) =>
         document.Blocks

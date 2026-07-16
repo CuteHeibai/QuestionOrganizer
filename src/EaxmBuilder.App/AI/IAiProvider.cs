@@ -19,6 +19,11 @@ public interface IAiProvider
         QuestionDocument document,
         string additionalInstructions,
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FigureDocument>> CreateGeoGebraFiguresAsync(
+        string sourcePath,
+        QuestionDocument document,
+        string additionalInstructions,
+        CancellationToken cancellationToken = default);
     Task<OutputReviewResult> ReviewOutputsAsync(
         string sourcePath,
         QuestionDocument document,

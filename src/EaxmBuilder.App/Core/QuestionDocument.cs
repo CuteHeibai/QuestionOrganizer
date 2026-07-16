@@ -34,6 +34,7 @@ public sealed class FigureDocument
     public string Id { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string Svg { get; set; } = string.Empty;
+    public List<string> GeoGebraCommands { get; set; } = [];
 }
 
 public sealed class OcrResult

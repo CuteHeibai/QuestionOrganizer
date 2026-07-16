@@ -3,6 +3,8 @@ bin/
 obj/
 artifacts/
 tmp/
+publish/
+src/EaxmBuilder.App/Assets/GeoGebra/
 
 # IDE / local user state
 .vs/

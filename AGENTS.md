@@ -63,15 +63,18 @@
 
 - 修改导出逻辑后必须至少跑烟雾测试，重点检查 DOCX 可打开性、公式结构、PDF/HTML 是否残留原始 LaTeX、输出选择和追加 Word。
 - 能做视觉 QA 时，渲染 PDF/DOCX 页面检查是否有文字遮挡、截断、公式错排或图形缺失。
-- 打包时不要为了覆盖发布目录而关闭用户正在运行的软件，除非用户明确允许；应发布到新的 staging 目录再压缩。
+- 本地发布目录固定为仓库根目录的 `publish`；不要再输出到 `publish-deepseek-fix` 或其他按功能命名的 publish 目录。
+- 打包时不要为了覆盖发布目录而关闭用户正在运行的软件，除非用户明确允许；如 `publish` 被运行中的程序占用，应先报告，不要改用新的 publish 目录名绕过。
 - 发布形式是解压即用的 ZIP 包，ZIP 内直接包含 `QuestionOrganizer.exe` 和运行所需文件。
 - 不要再生成、打包或要求用户运行 `Install.ps1` / `Uninstall.ps1`；卸载方式是删除解压目录。
 - 打包产物应尽量自包含，减少用户环境依赖；删除解压目录时不应删除用户项目、输出文件、AI 配置或其他数据。
+- 不要随软件内置或分发 GeoGebra bundle；只提供用户自行接入方式，例如 exe 同级 `GeoGebra\deployggb.js` 或 `QUESTION_ORGANIZER_GEOGEBRA_PATH` 环境变量。
+- 当用户要求“上传 git”“推送 git”“打包上传到 git”或类似发布动作时，必须同时完成源码推送、生成 ZIP 发布包，并把 ZIP 上传到 GitHub Release；除非用户明确说不要上传 Release。
 
 ## Repository Upload And Filtering
 
 - 上传或推送仓库前，必须先检查 `.gitignore` 和待提交文件，过滤本地运行产物、ZIP 打包产物、渲染 QA 输出、临时目录和个人上下文。
-- 不要上传 `artifacts/`、`tmp/`、`bin/`、`obj/`、`.vs/`、`.agents/`、`.codex/`、日志、ZIP 包、临时渲染图片或本地测试输出。
+- 不要上传 `artifacts/`、`tmp/`、`publish/`、`bin/`、`obj/`、`.vs/`、`.agents/`、`.codex/`、`src/EaxmBuilder.App/Assets/GeoGebra/`、GeoGebra bundle、日志、ZIP 包、临时渲染图片或本地测试输出。
 - 不要上传 API Key、Token、`.env*`、`settings.json`、用户项目数据、用户输出目录或任何包含个人路径/凭据的配置。
 - 可以上传源码、测试、README、AGENTS、项目文件、默认模板等项目运行必需且不含私密信息的文件。
 - 推送前用关键词扫描检查 `sk-`、`api key`、`token`、`password`、`secret` 等敏感内容；命中时必须人工判断并移除不应公开的内容。

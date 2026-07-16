@@ -5,6 +5,21 @@ namespace EaxmBuilder.Export;
 
 internal static partial class MathTextFormatter
 {
+    public enum SegmentKind
+    {
+        Text,
+        Fraction,
+        Radical
+    }
+
+    public sealed record MathSegment(
+        SegmentKind Kind,
+        string Text,
+        string Numerator = "",
+        string Denominator = "",
+        string Radicand = "",
+        string Degree = "");
+
     private static readonly Dictionary<char, char> Superscripts = new()
     {
         ['0'] = '⁰', ['1'] = '¹', ['2'] = '²', ['3'] = '³', ['4'] = '⁴',
@@ -80,12 +95,96 @@ internal static partial class MathTextFormatter
         "scriptscriptstyle", "left", "right", "big", "Big", "bigg", "Bigg", "begin", "end"
     };
 
+    private static readonly HashSet<string> LooseCommands = new(StringComparer.Ordinal)
+    {
+        "sqrt", "frac", "dfrac", "tfrac", "angle", "measuredangle", "triangle", "perp", "parallel",
+        "le", "leq", "leqslant", "ge", "geq", "geqslant", "neq", "ne", "equiv", "approx", "sim",
+        "times", "div", "cdot", "pm", "mp", "degree", "infty", "alpha", "beta", "gamma", "delta",
+        "epsilon", "theta", "lambda", "mu", "pi", "rho", "sigma", "phi", "omega"
+    };
+
     public static string ToDisplayText(
         string latex,
         IReadOnlyDictionary<string, string>? customSymbols = null)
     {
         var value = StripMathDelimiters(latex.Trim());
-        return CollapseSpaces(Parse(value, NormalizeCustomSymbols(customSymbols))).Trim();
+        var normalizedCustomSymbols = NormalizeCustomSymbols(customSymbols);
+        value = AddMissingCommandBackslashes(value, normalizedCustomSymbols);
+        return CollapseSpaces(Parse(value, normalizedCustomSymbols)).Trim();
+    }
+
+    public static string ToInlineDisplayText(
+        string text,
+        IReadOnlyDictionary<string, string>? customSymbols = null)
+    {
+        var normalizedCustomSymbols = NormalizeCustomSymbols(customSymbols);
+        return Parse(AddMissingCommandBackslashes(text, normalizedCustomSymbols), normalizedCustomSymbols);
+    }
+
+    public static IReadOnlyList<MathSegment> ToMathSegments(
+        string value,
+        IReadOnlyDictionary<string, string>? customSymbols = null,
+        bool stripMathDelimiters = false)
+    {
+        var normalizedCustomSymbols = NormalizeCustomSymbols(customSymbols);
+        var text = stripMathDelimiters ? StripMathDelimiters(value.Trim()) : value;
+        text = AddMissingCommandBackslashes(text, normalizedCustomSymbols);
+
+        var segments = new List<MathSegment>();
+        var cursor = 0;
+        foreach (Match match in MathStructureRegex().Matches(text))
+        {
+            if (match.Index > cursor)
+            {
+                var plain = Parse(text[cursor..match.Index], normalizedCustomSymbols);
+                if (plain.Length > 0) segments.Add(new MathSegment(SegmentKind.Text, plain));
+            }
+
+            if (match.Groups["frac"].Success)
+            {
+                segments.Add(new MathSegment(
+                    SegmentKind.Fraction,
+                    string.Empty,
+                    Numerator: ToDisplayText(match.Groups["num"].Value, normalizedCustomSymbols),
+                    Denominator: ToDisplayText(match.Groups["den"].Value, normalizedCustomSymbols)));
+            }
+            else if (match.Groups["slash"].Success)
+            {
+                segments.Add(new MathSegment(
+                    SegmentKind.Fraction,
+                    string.Empty,
+                    Numerator: ToDisplayText(match.Groups["num2"].Value, normalizedCustomSymbols),
+                    Denominator: ToDisplayText(match.Groups["den2"].Value, normalizedCustomSymbols)));
+            }
+            else if (match.Groups["sqrt"].Success)
+            {
+                var radicand = match.Groups["rad"].Success
+                    ? match.Groups["rad"].Value
+                    : match.Groups["radsingle"].Value;
+                segments.Add(new MathSegment(
+                    SegmentKind.Radical,
+                    string.Empty,
+                    Radicand: ToDisplayText(radicand, normalizedCustomSymbols),
+                    Degree: match.Groups["degree"].Success
+                        ? ToDisplayText(match.Groups["degree"].Value, normalizedCustomSymbols)
+                        : string.Empty));
+            }
+
+            cursor = match.Index + match.Length;
+        }
+
+        if (cursor < text.Length)
+        {
+            var plain = Parse(text[cursor..], normalizedCustomSymbols);
+            if (plain.Length > 0) segments.Add(new MathSegment(SegmentKind.Text, plain));
+        }
+
+        if (segments.Count == 0)
+        {
+            var plain = Parse(text, normalizedCustomSymbols);
+            if (plain.Length > 0) segments.Add(new MathSegment(SegmentKind.Text, plain));
+        }
+        return segments;
     }
 
     private static IReadOnlyDictionary<string, string> NormalizeCustomSymbols(
@@ -103,6 +202,29 @@ internal static partial class MathTextFormatter
             normalized[command] = value.Trim();
         }
         return normalized;
+    }
+
+    private static string AddMissingCommandBackslashes(
+        string value,
+        IReadOnlyDictionary<string, string> customSymbols)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+
+        var commands = LooseCommands
+            .Concat(customSymbols.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .OrderByDescending(command => command.Length);
+        var result = value;
+        foreach (var command in commands)
+        {
+            if (string.IsNullOrWhiteSpace(command)) continue;
+            result = Regex.Replace(
+                result,
+                $@"(?<![\\A-Za-z]){Regex.Escape(command)}(?![A-Za-z])",
+                "\\" + command,
+                RegexOptions.CultureInvariant);
+        }
+        return result;
     }
 
     private static string Parse(string value, IReadOnlyDictionary<string, string> customSymbols)
@@ -192,7 +314,8 @@ internal static partial class MathTextFormatter
         {
             var degree = ParseOptionalBracket(value, ref index, customSymbols);
             var radicand = ParseOptionalRequiredGroup(value, ref index, customSymbols);
-            return string.IsNullOrWhiteSpace(degree) ? $"√({radicand})" : $"{ToScript(degree, Superscripts)}√({radicand})";
+            var formatted = ShouldWrapRadicand(radicand) ? $"√({radicand})" : $"√{radicand}";
+            return string.IsNullOrWhiteSpace(degree) ? formatted : $"{ToScript(degree, Superscripts)}{formatted}";
         }
 
         if (command is "overline" or "bar")
@@ -319,6 +442,10 @@ internal static partial class MathTextFormatter
         return output.ToString();
     }
 
+    private static bool ShouldWrapRadicand(string value) =>
+        string.IsNullOrWhiteSpace(value) ||
+        !Regex.IsMatch(value, @"^\d+([.,]\d+)?$", RegexOptions.CultureInvariant);
+
     private static string StripMathDelimiters(string value)
     {
         if (value.StartsWith("$$", StringComparison.Ordinal) &&
@@ -343,4 +470,9 @@ internal static partial class MathTextFormatter
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex MultiSpaceRegex();
+
+    [GeneratedRegex(
+        @"(?<frac>\\(?:dfrac|tfrac|frac)\s*\{(?<num>[^{}]+)\}\s*\{(?<den>[^{}]+)\})|(?<sqrt>\\sqrt(?:\[(?<degree>[^\]]+)\])?\s*(?:\{(?<rad>[^{}]+)\}|(?<radsingle>[A-Za-z0-9.]+)))|(?<slash>\((?<num2>[^()\u4e00-\u9fff]{1,30})\)\s*/\s*\((?<den2>[^()\u4e00-\u9fff]{1,30})\))",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex MathStructureRegex();
 }

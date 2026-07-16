@@ -106,6 +106,29 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         return figures;
     }
 
+    public async Task<IReadOnlyList<FigureDocument>> CreateGeoGebraFiguresAsync(
+        string sourcePath,
+        QuestionDocument document,
+        string additionalInstructions,
+        CancellationToken cancellationToken = default)
+    {
+        if (document.Blocks.All(block => block.Type != QuestionBlockType.Figure)) return [];
+
+        var ids = document.Blocks
+            .Where(block => block.Type == QuestionBlockType.Figure)
+            .Select(block => block.FigureId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var figures = new List<FigureDocument>();
+        foreach (var id in ids)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            figures.Add(await CreateSingleGeoGebraFigureAsync(sourcePath, document, id, additionalInstructions, cancellationToken));
+        }
+        return figures;
+    }
+
     public Task<OutputReviewResult> ReviewOutputsAsync(
         string sourcePath,
         QuestionDocument document,
@@ -177,6 +200,43 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         return figure;
     }
 
+    private async Task<FigureDocument> CreateSingleGeoGebraFigureAsync(
+        string sourcePath,
+        QuestionDocument document,
+        string figureId,
+        string additionalInstructions,
+        CancellationToken cancellationToken)
+    {
+        var figureMap = DescribeFigureMap(document);
+        var prompt = $$"""
+            精确观察原图中的数学图形，并只为编号 {{figureId}} 生成 GeoGebra 绘图命令。
+            题目中的图形编号对应关系如下：
+            {{figureMap}}
+
+            只输出该图所需的二维 GeoGebra 命令，命令会被本地内嵌 GeoGebra 执行。
+            要求：
+            1. 默认只用 Segment 绘制有限线段，禁止把有限线段写成 Line 或 Ray；只有原图明确是无限直线时才可使用 Line；
+            2. 禁止使用 Angle 命令自动生成角度标注；除非原图明确画了角弧或角度数值，否则不要标角；
+            3. 直角标记必须用 2 到 3 条短 Segment 或小 Polygon 手动画成方角，不要用 Angle(A,B,C) 生成圆弧角标；
+            4. 端点只作为构造点存在，不要依赖 GeoGebra 自动显示点标签或明显圆点；点名必须用 Text("A", A + (-0.2,0.2)) 手动标注；
+            5. 所有线条和文字最终会被统一成黑色，请不要使用彩色样式；
+            6. 点名、线段、垂线、角平分线、坐标轴、标注位置要尽量贴近原图；
+            7. 每个点请显式给坐标，例如 A=(0,3)，再用 Segment(A,B)；
+            8. 不要输出 SVG、不要输出解释、不要输出 Markdown。
+
+            仅返回 JSON：
+            {"figures":[{"id":"{{figureId}}","description":"简短说明","geoGebraCommands":["A=(0,3)","B=(0,0)","Segment(A,B)"]}]}
+            """ + FormatAdditionalInstructions(additionalInstructions);
+        var result = await RequestJsonAsync<FigureEnvelope>(sourcePath, prompt, cancellationToken);
+        var figure = result.Figures.FirstOrDefault(item =>
+                         string.Equals(item.Id, figureId, StringComparison.OrdinalIgnoreCase))
+                     ?? result.Figures.SingleOrDefault();
+        if (figure is null || figure.GeoGebraCommands.Count == 0)
+            throw new InvalidOperationException($"AI 未返回 {figureId} 的 GeoGebra 命令。");
+        figure.Id = figureId;
+        return figure;
+    }
+
     private static string DescribeFigureMap(QuestionDocument document)
     {
         var lines = new List<string>();
@@ -221,24 +281,29 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         CancellationToken cancellationToken)
     {
         var dataUrl = await GetDataUrlAsync(sourcePath, cancellationToken);
-        object request = _useResponsesApi
-            ? CreateResponsesRequest(sourcePath, dataUrl, prompt)
-            : CreateChatRequest(sourcePath, dataUrl, prompt);
-        var endpoint = _useResponsesApi ? "responses" : "chat/completions";
-
         string content;
         try
         {
             if (_useResponsesApi)
             {
-                content = await RequestResponsesTextAsync(request, cancellationToken);
+                try
+                {
+                    content = await RequestResponsesTextAsync(
+                        CreateResponsesRequest(sourcePath, dataUrl, prompt),
+                        cancellationToken);
+                }
+                catch (ResponsesApiException exception) when (CanFallbackToChat(sourcePath, exception))
+                {
+                    content = await RequestChatTextAsync(
+                        CreateChatRequest(sourcePath, dataUrl, prompt),
+                        cancellationToken);
+                }
             }
             else
             {
-                using var response = await _client.PostAsJsonAsync(endpoint, request, JsonOptions, cancellationToken);
-                await EnsureSuccessAsync(response, cancellationToken);
-                var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-                content = ExtractChatText(payload);
+                content = await RequestChatTextAsync(
+                    CreateChatRequest(sourcePath, dataUrl, prompt),
+                    cancellationToken);
             }
         }
         catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
@@ -247,8 +312,29 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
                 $"AI 请求超过 {RequestTimeout.TotalMinutes:0} 分钟仍未完成。可以稍后单独重试本步骤，或换用响应更快的模型。",
                 exception);
         }
-        return DeserializeJsonContent<T>(content);
+        try
+        {
+            return DeserializeJsonContent<T>(content);
+        }
+        catch (InvalidJsonResponseException exception)
+        {
+            var savedPath = await SaveInvalidJsonResponseAsync(sourcePath, content, cancellationToken);
+            try
+            {
+                return await RepairJsonResponseAsync<T>(content, cancellationToken);
+            }
+            catch (Exception repairException) when (repairException is not OperationCanceledException)
+            {
+                throw new InvalidOperationException(
+                    $"{exception.Message} 已保存原始响应：{savedPath}。软件已自动尝试 JSON 修复但仍失败。",
+                    repairException);
+            }
+        }
     }
+
+    private static bool CanFallbackToChat(string sourcePath, ResponsesApiException exception) =>
+        exception.AllowChatFallback &&
+        !Path.GetExtension(sourcePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
 
     private object CreateResponsesRequest(string sourcePath, string dataUrl, string prompt)
     {
@@ -296,6 +382,14 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         return ExtractResponsesText(payload.RootElement);
     }
 
+    private async Task<string> RequestChatTextAsync(object request, CancellationToken cancellationToken)
+    {
+        using var response = await _client.PostAsJsonAsync("chat/completions", request, JsonOptions, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        return ExtractChatText(payload);
+    }
+
     private static string ExtractResponsesStreamText(string eventStream)
     {
         var text = new StringBuilder();
@@ -330,7 +424,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
 
         if (text.Length > 0) return text.ToString();
         if (hasCompletedResponse) return ExtractResponsesText(completedResponse);
-        throw new InvalidOperationException("AI 流式响应中没有最终文本。");
+        throw new ResponsesApiException("AI 流式响应中没有最终文本。", allowChatFallback: true);
     }
 
     private object CreateChatRequest(string sourcePath, string dataUrl, string prompt)
@@ -356,6 +450,48 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             response_format = new { type = "json_object" },
             max_tokens = 16_384
         };
+    }
+
+    private object CreateJsonRepairRequest(string content) => new
+    {
+        model = _model,
+        messages = new[]
+        {
+            new
+            {
+                role = "user",
+                content = $$"""
+                    下面是一段 AI 对数学题整理任务的原始响应，但它不是严格合法 JSON。
+                    请只输出一个语法有效的 JSON 对象，不要解释，不要 Markdown，不要代码块。
+                    要保持原响应中的字段、题目文字、公式、图形信息和语义；不要新增答案或解析。
+                    如果原响应前后有说明文字，请删除说明文字；如果只有少量逗号、引号、转义或括号错误，请修复。
+
+                    原始响应：
+                    {{content}}
+                    """
+            }
+        },
+        response_format = new { type = "json_object" },
+        max_tokens = 16_384
+    };
+
+    private async Task<T> RepairJsonResponseAsync<T>(string content, CancellationToken cancellationToken)
+    {
+        var repaired = await RequestChatTextAsync(CreateJsonRepairRequest(TrimForPrompt(content, 60_000)), cancellationToken);
+        return DeserializeJsonContent<T>(repaired);
+    }
+
+    private static async Task<string> SaveInvalidJsonResponseAsync(
+        string sourcePath,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(sourcePath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            directory = Directory.GetCurrentDirectory();
+        var path = Path.Combine(directory, $"ai-invalid-json-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        await File.WriteAllTextAsync(path, content, new UTF8Encoding(false), cancellationToken);
+        return path;
     }
 
     private static async Task<string> GetDataUrlAsync(string path, CancellationToken cancellationToken)
@@ -398,6 +534,10 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
 
         var status = payload.TryGetProperty("status", out var statusValue) ? statusValue.GetString() : null;
         var detail = ReadResponseDetail(payload);
+        if (status is "failed" or "incomplete")
+            throw new ResponsesApiException(
+                $"AI Responses API 返回{(status == "failed" ? "失败" : "未完成")}{detail}。",
+                allowChatFallback: status == "failed");
         throw new InvalidOperationException(
             $"AI 响应中没有可读取的文本{(string.IsNullOrWhiteSpace(status) ? string.Empty : $"（状态：{status}）")}{detail}" +
             $"（可用字段：{DescribeResponsesShape(payload)}）。");
@@ -528,8 +668,9 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             }
         }
 
-        throw new InvalidOperationException(
+        throw new InvalidJsonResponseException(
             "AI 返回的结构化数据无法解析。已尝试从响应中抽取完整 JSON，请重试本步骤；如果仍失败，请在 AI 要求中写明“只返回 JSON，不要解释”。",
+            value,
             lastException);
     }
 
@@ -644,5 +785,20 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
     private sealed class FigureEnvelope
     {
         public List<FigureDocument> Figures { get; set; } = [];
+    }
+
+    private sealed class ResponsesApiException(string message, bool allowChatFallback)
+        : InvalidOperationException(message)
+    {
+        public bool AllowChatFallback { get; } = allowChatFallback;
+    }
+
+    private sealed class InvalidJsonResponseException(
+        string message,
+        string content,
+        Exception? innerException)
+        : InvalidOperationException(message, innerException)
+    {
+        public string Content { get; } = content;
     }
 }

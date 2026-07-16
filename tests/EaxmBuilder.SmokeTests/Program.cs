@@ -15,6 +15,7 @@ using EaxmBuilder.Services;
 var output = Path.Combine(Path.GetTempPath(), "QuestionOrganizer-Smoke-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(output);
 var previousFigureTool = Environment.GetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL");
+var previousGeoGebraPath = Environment.GetEnvironmentVariable("QUESTION_ORGANIZER_GEOGEBRA_PATH");
 
 try
 {
@@ -40,6 +41,8 @@ try
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "其中" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\triangle ABC,\ \mathrm{AB}\perp CD,\ \sqrt{x_1^2}+\angle A+\sin\theta" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\customstar+\widearc{AB}" },
+            new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "如图，angle ABC和angle ADC的角平分线分别交AD、BC于E、F。过F作FG perp BE于G。" },
+            new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "（2）若GF = sqrt2，HF = (1)/(2)，求triangle DHF的面积；" },
             new QuestionBlock { Type = QuestionBlockType.Figure, FigureId = "figure1" }
         ],
         Figures =
@@ -152,6 +155,9 @@ try
         !originalFigureSvg.Contains("data:image/png;base64", StringComparison.Ordinal))
         throw new InvalidOperationException("原图保留模式未正确跳过 AI 重绘并生成可导出的 SVG。");
     Environment.SetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL", Path.Combine(output, "missing-tool.exe"));
+    var localGeoGebraPath = Path.Combine(Directory.GetCurrentDirectory(), "src", "EaxmBuilder.App", "Assets", "GeoGebra");
+    Environment.SetEnvironmentVariable("QUESTION_ORGANIZER_GEOGEBRA_PATH",
+        Directory.Exists(localGeoGebraPath) ? localGeoGebraPath : string.Empty);
     var externalFallbackProject = new QuestionProject
     {
         Name = "ExternalFallbackFigure",
@@ -168,8 +174,18 @@ try
             externalFakeAi,
             [new DocxExporter(), new PdfExporter(), new LatexExporter(), new JsonExporter()])
         .RunStepAsync(externalFallbackProject, TaskStep.FigureRedraw);
-    if (!externalSucceeded || externalFakeAi.RedrawCallCount != 0)
-        throw new InvalidOperationException("外部工具失败时未回退到原图保留模式。");
+    if (!externalSucceeded ||
+        externalFakeAi.RedrawCallCount != 0 ||
+        externalFakeAi.GeoGebraCallCount == 0 ||
+        !File.Exists(Path.Combine(originalFigureDirectory, "figure1.geogebra.txt")))
+        throw new InvalidOperationException("外部工具模式未优先生成 GeoGebra 命令并在失败时回退。");
+    if (Directory.Exists(localGeoGebraPath))
+    {
+        var externalDocument = await repository.LoadDataAsync<QuestionDocument>(externalFallbackProject, "document.json")
+                               ?? throw new InvalidOperationException("外部工具模式未保存 document.json。");
+        if (externalDocument.Figures.FirstOrDefault()?.Description != "内嵌 GeoGebra 绘制")
+            throw new InvalidOperationException("本地 GeoGebra bundle 存在时未使用内嵌 GeoGebra 绘制图形。");
+    }
 
     Exception? animationError = null;
     var animationThread = new Thread(() =>
@@ -319,6 +335,18 @@ try
         if (extracted != "{\"ok\":true}")
             throw new InvalidOperationException("Responses 解析器未覆盖已知返回结构。");
     }
+    try
+    {
+        using var failedPayload = JsonDocument.Parse(
+            "{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"failed\",\"error\":{\"message\":\"Upstream request failed\"}}");
+        _ = extractResponsesText.Invoke(null, [failedPayload.RootElement]);
+        throw new InvalidOperationException("Responses failed 状态没有抛出明确错误。");
+    }
+    catch (TargetInvocationException exception)
+        when (exception.InnerException?.Message.Contains("AI Responses API 返回失败：Upstream request failed", StringComparison.Ordinal) == true)
+    {
+        // Expected: failed Responses payloads should expose the upstream error directly.
+    }
 
     RequireFile("figure1.svg");
     RequireFile("metadata.json");
@@ -353,6 +381,17 @@ try
             ?? throw new InvalidOperationException("DOCX 缺少正文关系文件。");
         if (!(await ReadEntryAsync(archive, "word/_rels/document.xml.rels")).Contains("relationships/image", StringComparison.Ordinal))
             throw new InvalidOperationException("DOCX 缺少 SVG 图形关系。");
+        if (xml.Contains("angle ABC", StringComparison.Ordinal) ||
+            xml.Contains("perp BE", StringComparison.Ordinal) ||
+            xml.Contains("sqrt2", StringComparison.Ordinal) ||
+            xml.Contains("(1)/(2)", StringComparison.Ordinal) ||
+            xml.Contains("triangle DHF", StringComparison.Ordinal) ||
+            !xml.Contains("∠ ABC", StringComparison.Ordinal) ||
+            !xml.Contains("FG ⊥ BE", StringComparison.Ordinal) ||
+            !xml.Contains("<m:rad>", StringComparison.Ordinal) ||
+            !xml.Contains("<m:f>", StringComparison.Ordinal) ||
+            !xml.Contains("△ DHF", StringComparison.Ordinal))
+            throw new InvalidOperationException("DOCX 正文中的裸 LaTeX/OCR 命令未能解析为数学符号或结构化公式。");
     }
 
     var html = await File.ReadAllTextAsync(Path.Combine(output, "question.html"));
@@ -368,10 +407,21 @@ try
         decodedHtml.Contains(@"\widearc", StringComparison.Ordinal) ||
         !decodedHtml.Contains("△ ABC", StringComparison.Ordinal) ||
         !decodedHtml.Contains("AB⊥ CD", StringComparison.Ordinal) ||
-        !decodedHtml.Contains("√(x₁²)", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("<msqrt>", StringComparison.Ordinal) ||
         !decodedHtml.Contains("∠ A+sinθ", StringComparison.Ordinal) ||
         !decodedHtml.Contains("★+⌒AB", StringComparison.Ordinal))
-        throw new InvalidOperationException("LaTeX 常见命令未能解析为可读数学符号。");
+        throw new InvalidOperationException("LaTeX 常见命令未能解析为可读数学符号或结构化公式。");
+    if (decodedHtml.Contains("angle ABC", StringComparison.Ordinal) ||
+        decodedHtml.Contains("perp BE", StringComparison.Ordinal) ||
+        decodedHtml.Contains("sqrt2", StringComparison.Ordinal) ||
+        decodedHtml.Contains("(1)/(2)", StringComparison.Ordinal) ||
+        decodedHtml.Contains("triangle DHF", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("∠ ABC", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("FG ⊥ BE", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("<msqrt>", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("<mfrac>", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("△ DHF", StringComparison.Ordinal))
+        throw new InvalidOperationException("段落正文中的裸 LaTeX/OCR 命令未能解析为数学符号或结构化公式。");
 
     var pdfHeader = new byte[4];
     await using (var stream = File.OpenRead(Path.Combine(output, "question.pdf")))
@@ -412,12 +462,14 @@ try
 finally
 {
     Environment.SetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL", previousFigureTool);
+    Environment.SetEnvironmentVariable("QUESTION_ORGANIZER_GEOGEBRA_PATH", previousGeoGebraPath);
     Directory.Delete(output, true);
 }
 
 internal sealed class FakeAiProvider : IAiProvider
 {
     public int RedrawCallCount { get; private set; }
+    public int GeoGebraCallCount { get; private set; }
 
     public Task TestConnectionAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -445,6 +497,30 @@ internal sealed class FakeAiProvider : IAiProvider
     {
         RedrawCallCount++;
         return [];
+    }
+
+    public Task<IReadOnlyList<FigureDocument>> CreateGeoGebraFiguresAsync(
+        string sourcePath,
+        QuestionDocument document,
+        string additionalInstructions,
+        CancellationToken cancellationToken = default)
+    {
+        GeoGebraCallCount++;
+        return Task.FromResult<IReadOnlyList<FigureDocument>>([
+            new FigureDocument
+            {
+                Id = "figure1",
+                Description = "测试 GeoGebra 图形",
+                GeoGebraCommands =
+                [
+                    "A=(0,0)",
+                    "B=(4,0)",
+                    "Segment(A,B)",
+                    "Text(\"A\",A+(-0.2,0.2))",
+                    "Text(\"B\",B+(0.2,0.2))"
+                ]
+            }
+        ]);
     }
 
     public Task<OutputReviewResult> ReviewOutputsAsync(

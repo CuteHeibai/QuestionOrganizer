@@ -80,7 +80,8 @@ public static class HtmlRenderer
             <html lang="zh-CN"><head><meta charset="utf-8"><title>{{WebUtility.HtmlEncode(document.Title)}}</title>
             <style>
             @page{size:A4;margin:25.4mm 31.8mm}body{font-family:"SimSun","宋体",serif;font-size:10.5pt;line-height:2;color:#111}
-            p{margin:0}.formula{font-family:"Cambria Math","Times New Roman",serif}
+            p{margin:0}.formula,math{font-family:"Cambria Math","Times New Roman",serif}
+            math{font-size:1em} mfrac{font-size:.95em}
             svg{display:block;max-width:68%;height:auto;margin:10pt auto}
             .prompt-row{display:grid;grid-template-columns:minmax(0,1fr) 122px;gap:10pt;align-items:center}
             .target-figure svg{max-width:118px;margin:0 auto}
@@ -128,7 +129,7 @@ public static class HtmlRenderer
             if (block.Type == QuestionBlockType.Formula)
             {
                 body.Append("<span class=\"formula\">")
-                    .Append(WebUtility.HtmlEncode(MathTextFormatter.ToDisplayText(block.Latex, latexSymbolMap)))
+                    .Append(RenderMathHtml(block.Latex, latexSymbolMap, stripMathDelimiters: true))
                     .Append("</span>");
                 continue;
             }
@@ -140,9 +141,48 @@ public static class HtmlRenderer
                 text = $"{questionNumber.TrimEnd('.', '．', '、')}. {text}";
             }
             if (!string.IsNullOrWhiteSpace(text)) numberPlaced = true;
-            body.Append(WebUtility.HtmlEncode(text));
+            body.Append(RenderMathHtml(text, latexSymbolMap, stripMathDelimiters: false));
         }
         body.AppendLine("</p>");
+    }
+
+    private static string RenderMathHtml(
+        string value,
+        IReadOnlyDictionary<string, string> latexSymbolMap,
+        bool stripMathDelimiters)
+    {
+        var output = new StringBuilder();
+        foreach (var segment in MathTextFormatter.ToMathSegments(value, latexSymbolMap, stripMathDelimiters))
+        {
+            output.Append(segment.Kind switch
+            {
+                MathTextFormatter.SegmentKind.Fraction => RenderFraction(segment, latexSymbolMap),
+                MathTextFormatter.SegmentKind.Radical => RenderRadical(segment, latexSymbolMap),
+                _ => WebUtility.HtmlEncode(segment.Text)
+            });
+        }
+        return output.ToString();
+    }
+
+    private static string RenderFraction(
+        MathTextFormatter.MathSegment segment,
+        IReadOnlyDictionary<string, string> latexSymbolMap) =>
+        "<math><mfrac><mrow>" +
+        RenderMathHtml(segment.Numerator, latexSymbolMap, stripMathDelimiters: true) +
+        "</mrow><mrow>" +
+        RenderMathHtml(segment.Denominator, latexSymbolMap, stripMathDelimiters: true) +
+        "</mrow></mfrac></math>";
+
+    private static string RenderRadical(
+        MathTextFormatter.MathSegment segment,
+        IReadOnlyDictionary<string, string> latexSymbolMap)
+    {
+        var radicand = RenderMathHtml(segment.Radicand, latexSymbolMap, stripMathDelimiters: true);
+        if (string.IsNullOrWhiteSpace(segment.Degree))
+            return "<math><msqrt><mrow>" + radicand + "</mrow></msqrt></math>";
+        return "<math><mroot><mrow>" + radicand + "</mrow><mrow>" +
+               RenderMathHtml(segment.Degree, latexSymbolMap, stripMathDelimiters: true) +
+               "</mrow></mroot></math>";
     }
 
     private static bool StartsNewParagraph(QuestionBlock block)
