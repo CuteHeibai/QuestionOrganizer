@@ -70,6 +70,7 @@
 - 打包产物应尽量自包含，减少用户环境依赖；删除解压目录时不应删除用户项目、输出文件、AI 配置或其他数据。
 - 不要随软件内置或分发 GeoGebra bundle；只提供用户自行接入方式，例如 exe 同级 `GeoGebra\deployggb.js` 或 `QUESTION_ORGANIZER_GEOGEBRA_PATH` 环境变量。
 - 当用户要求“上传 git”“推送 git”“打包上传到 git”或类似发布动作时，必须同时完成源码推送、生成 ZIP 发布包，并把 ZIP 上传到 GitHub Release；除非用户明确说不要上传 Release。
+- 内置或提交任何人类可读的 Word/文档模板前，必须先脱敏和格式提炼：只保留页面、字体、段落、样式、节属性等可复用格式，不要原样提交包含具体题目、答案、插图、学校/地区/年份等可识别内容的用户模板。
 
 ## Repository Upload And Filtering
 
