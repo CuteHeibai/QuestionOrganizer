@@ -208,10 +208,14 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         CancellationToken cancellationToken)
     {
         var figureMap = DescribeFigureMap(document);
+        var questionContext = DescribeQuestionContext(document);
         var prompt = $$"""
             精确观察原图中的数学图形，并只为编号 {{figureId}} 生成 GeoGebra 绘图命令。
             题目中的图形编号对应关系如下：
             {{figureMap}}
+
+            题目文字和公式上下文如下。绘图必须同时满足原图视觉位置和这些几何约束：
+            {{questionContext}}
 
             只输出该图所需的二维 GeoGebra 命令，命令会被本地内嵌 GeoGebra 执行。
             要求：
@@ -221,8 +225,14 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             4. 端点只作为构造点存在，不要依赖 GeoGebra 自动显示点标签或明显圆点；点名必须用 Text("A", A + (-0.2,0.2)) 手动标注；
             5. 所有线条和文字最终会被统一成黑色，请不要使用彩色样式；
             6. 点名、线段、垂线、角平分线、坐标轴、标注位置要尽量贴近原图；
-            7. 每个点请显式给坐标，例如 A=(0,3)，再用 Segment(A,B)；
-            8. 不要输出 SVG、不要输出解释、不要输出 Markdown。
+            7. 每个可见交点或端点必须只定义一次命名点。所有经过该点的线段必须引用同一个点对象，例如 Segment(G,D)、Segment(G,F)，不要用相近坐标伪造连接；
+            8. 同一直线上的点必须严格共线，例如 E 在 AD 上、H/F 在 BC 上时应使用相同的 y 坐标；竖线上的点应使用相同的 x 坐标；
+            9. 如果题干说明垂直、角平分线、交于某点或连接某两点，必须优先满足这些拓扑关系，再微调坐标比例；
+            10. 对矩形/平行四边形等基础图形，先定义外框点，再定义边上点、交点，最后用 Segment(已有点,已有点) 绘制全部可见线段；
+            11. 坐标只用于保持原图的相对空间位置：建议把原图宽度映射到 x=0..10、高度映射到 y=0..6；不要为了美观移动点、改变线段长度、交换左右位置或上下关系；
+            12. 先在内部完成“点坐标表 → 线段清单”的两遍检查，再输出命令。线段端点必须优先引用点坐标表中的命名点，禁止在 Segment 中重新写近似坐标；
+            13. 输出前自查：原图中每一条可见线段都要有对应 Segment；所有应相交/连接的位置必须共享同一命名点；不要出现线段差一点没接上的情况；
+            14. 不要输出 SVG、不要输出解释、不要输出 Markdown。
 
             仅返回 JSON：
             {"figures":[{"id":"{{figureId}}","description":"简短说明","geoGebraCommands":["A=(0,3)","B=(0,0)","Segment(A,B)"]}]}
@@ -253,6 +263,17 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             lines.Add($"{block.FigureId}: {role}");
         }
         return lines.Count == 0 ? "无" : string.Join("\n", lines);
+    }
+
+    private static string DescribeQuestionContext(QuestionDocument document)
+    {
+        var lines = document.Blocks
+            .Where(block => block.Type is QuestionBlockType.Paragraph or QuestionBlockType.Formula)
+            .Select(block => block.Type == QuestionBlockType.Formula ? block.Latex : block.Text)
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .Select(text => text.Trim())
+            .ToArray();
+        return lines.Length == 0 ? "无" : TrimForPrompt(string.Join("\n", lines), 8_000);
     }
 
     private static string FormatAdditionalInstructions(string value)
@@ -325,8 +346,11 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             }
             catch (Exception repairException) when (repairException is not OperationCanceledException)
             {
+                var parseDetail = exception.InnerException is null
+                    ? string.Empty
+                    : $" 原因：{exception.InnerException.Message}";
                 throw new InvalidOperationException(
-                    $"{exception.Message} 已保存原始响应：{savedPath}。软件已自动尝试 JSON 修复但仍失败。",
+                    $"{exception.Message}{parseDetail} 已保存原始响应：{savedPath}。软件已自动尝试 JSON 修复但仍失败。",
                     repairException);
             }
         }

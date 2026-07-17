@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using EaxmBuilder.Core;
@@ -11,8 +13,18 @@ namespace EaxmBuilder.Services;
 
 internal static class GeoGebraRenderer
 {
-    private const int Width = 720;
-    private const int Height = 480;
+    private const int Width = 1080;
+    private const int Height = 720;
+    private const double PointSnapTolerance = 0.18;
+    private static readonly Regex PointDefinitionPattern = new(
+        @"^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CoordinatePattern = new(
+        @"\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex SegmentCommandPattern = new(
+        @"^\s*(?:Segment|Line|Ray|Vector|Polygon|Polyline)\s*\(",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     public static async Task<FigureDocument?> RenderAsync(
         QuestionProject project,
@@ -21,8 +33,9 @@ internal static class GeoGebraRenderer
     {
         if (figure.GeoGebraCommands.Count == 0) return null;
 
+        var normalizedCommands = NormalizeCommands(figure.GeoGebraCommands);
         var commandPath = Path.Combine(project.DirectoryPath, $"{SanitizeFigureId(figure.Id)}.geogebra.txt");
-        await File.WriteAllLinesAsync(commandPath, figure.GeoGebraCommands, cancellationToken);
+        await File.WriteAllLinesAsync(commandPath, normalizedCommands, cancellationToken);
 
         var deployPath = ResolveDeployScriptPath();
         var edgePath = PdfExporter.FindEdge();
@@ -33,7 +46,7 @@ internal static class GeoGebraRenderer
         var pngPath = Path.Combine(Path.GetTempPath(), $"QuestionOrganizer-GeoGebra-{token}.png");
         try
         {
-            await File.WriteAllTextAsync(htmlPath, CreateHtml(deployPath, figure.GeoGebraCommands),
+            await File.WriteAllTextAsync(htmlPath, CreateHtml(deployPath, normalizedCommands),
                 new UTF8Encoding(false), cancellationToken);
 
             var startInfo = new ProcessStartInfo
@@ -53,7 +66,11 @@ internal static class GeoGebraRenderer
 
             using var process = Process.Start(startInfo);
             if (process is null) return null;
-            await process.WaitForExitAsync(cancellationToken);
+            if (!await WaitForExitAsync(process, TimeSpan.FromSeconds(30), cancellationToken))
+            {
+                TryKill(process);
+                return null;
+            }
             if (process.ExitCode != 0 || !File.Exists(pngPath) || IsBlankPng(pngPath)) return null;
 
             var bounds = ReadImageBounds(pngPath);
@@ -62,7 +79,7 @@ internal static class GeoGebraRenderer
             {
                 Id = figure.Id,
                 Description = "内嵌 GeoGebra 绘制",
-                GeoGebraCommands = figure.GeoGebraCommands,
+                GeoGebraCommands = normalizedCommands.ToList(),
                 Svg = $"""
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="{bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}" overflow="hidden">
                       <image href="data:image/png;base64,{Convert.ToBase64String(bytes)}" x="0" y="0" width="{bounds.SourceWidth}" height="{bounds.SourceHeight}" preserveAspectRatio="none"/>
@@ -75,6 +92,50 @@ internal static class GeoGebraRenderer
             TryDelete(htmlPath);
             TryDelete(pngPath);
         }
+    }
+
+    private static IReadOnlyList<string> NormalizeCommands(IReadOnlyList<string> commands)
+    {
+        var points = new Dictionary<string, PointCoordinate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var command in commands)
+        {
+            var match = PointDefinitionPattern.Match(command);
+            if (!match.Success) continue;
+            if (!TryParseCoordinate(match.Groups[2].Value, out var x) ||
+                !TryParseCoordinate(match.Groups[3].Value, out var y)) continue;
+            points[match.Groups[1].Value] = new PointCoordinate(x, y);
+        }
+
+        if (points.Count == 0) return commands.ToArray();
+
+        return commands
+            .Select(command =>
+            {
+                if (!SegmentCommandPattern.IsMatch(command)) return command;
+                return CoordinatePattern.Replace(command, match =>
+                {
+                    if (!TryParseCoordinate(match.Groups[1].Value, out var x) ||
+                        !TryParseCoordinate(match.Groups[2].Value, out var y)) return match.Value;
+
+                    var nearest = points
+                        .Select(item => (Name: item.Key, Point: item.Value, Distance: DistanceSquared(item.Value, x, y)))
+                        .Where(item => item.Distance <= PointSnapTolerance * PointSnapTolerance)
+                        .OrderBy(item => item.Distance)
+                        .FirstOrDefault();
+                    return nearest.Name is null ? match.Value : nearest.Name;
+                });
+            })
+            .ToArray();
+    }
+
+    private static bool TryParseCoordinate(string value, out double result) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+
+    private static double DistanceSquared(PointCoordinate point, double x, double y)
+    {
+        var dx = point.X - x;
+        var dy = point.Y - y;
+        return dx * dx + dy * dy;
     }
 
     private static string CreateHtml(string deployPath, IReadOnlyList<string> commands)
@@ -114,7 +175,7 @@ internal static class GeoGebraRenderer
                     if (command && command.trim()) api.evalCommand(command);
                   }
                   normalizeStyle(api);
-                  if (api.setCoordSystem) api.setCoordSystem(-1, 9, -1, 6);
+                  if (api.setCoordSystem) api.setCoordSystem(-1.8, 9.8, -1.5, 6.8);
                   if (api.setMode) api.setMode(0);
                   document.body.dataset.ready = "1";
                 } catch (error) {
@@ -241,16 +302,14 @@ internal static class GeoGebraRenderer
 
         if (fullMaxX < 0) return new SourceImageBounds(0, 0, width, height, width, height);
 
-        var largest = FindLargestComponentBounds(dark, width, height);
-        var useLargest = largest.Area >= Math.Max(32, width * height / 2000) &&
-                         largest.Width >= width / 10 &&
-                         largest.Height >= height / 12;
-        var minX = useLargest ? largest.X : fullMinX;
-        var minY = useLargest ? largest.Y : fullMinY;
-        var maxX = useLargest ? largest.X + largest.Width - 1 : fullMaxX;
-        var maxY = useLargest ? largest.Y + largest.Height - 1 : fullMaxY;
+        var relevant = FindRelevantComponentBounds(dark, width, height);
+        var useRelevant = relevant.Area > 0;
+        var minX = useRelevant ? relevant.X : fullMinX;
+        var minY = useRelevant ? relevant.Y : fullMinY;
+        var maxX = useRelevant ? relevant.X + relevant.Width - 1 : fullMaxX;
+        var maxY = useRelevant ? relevant.Y + relevant.Height - 1 : fullMaxY;
 
-        const int padding = 18;
+        var padding = Math.Max(36, Math.Min(width, height) / 20);
         minX = Math.Max(0, minX - padding);
         minY = Math.Max(0, minY - padding);
         maxX = Math.Min(width - 1, maxX + padding);
@@ -258,11 +317,16 @@ internal static class GeoGebraRenderer
         return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
     }
 
-    private static ComponentBounds FindLargestComponentBounds(bool[] dark, int width, int height)
+    private static ComponentBounds FindRelevantComponentBounds(bool[] dark, int width, int height)
     {
         var visited = new bool[dark.Length];
         var queue = new Queue<int>();
-        var best = new ComponentBounds(0, 0, width, height, 0);
+        var minUnionX = width;
+        var minUnionY = height;
+        var maxUnionX = -1;
+        var maxUnionY = -1;
+        var unionArea = 0;
+        var minArea = Math.Max(10, width * height / 120_000);
         for (var start = 0; start < dark.Length; start++)
         {
             if (!dark[start] || visited[start]) continue;
@@ -291,10 +355,23 @@ internal static class GeoGebraRenderer
                 Enqueue(x, y + 1);
             }
 
-            if (area > best.Area)
-                best = new ComponentBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, area);
+            var component = new ComponentBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, area);
+            if (component.Area < minArea || IsLikelyEdgeArtifact(component, width, height)) continue;
+
+            minUnionX = Math.Min(minUnionX, component.X);
+            minUnionY = Math.Min(minUnionY, component.Y);
+            maxUnionX = Math.Max(maxUnionX, component.X + component.Width - 1);
+            maxUnionY = Math.Max(maxUnionY, component.Y + component.Height - 1);
+            unionArea += component.Area;
         }
-        return best;
+        return unionArea == 0
+            ? new ComponentBounds(0, 0, width, height, 0)
+            : new ComponentBounds(
+                minUnionX,
+                minUnionY,
+                maxUnionX - minUnionX + 1,
+                maxUnionY - minUnionY + 1,
+                unionArea);
 
         void Enqueue(int x, int y)
         {
@@ -304,6 +381,20 @@ internal static class GeoGebraRenderer
             visited[index] = true;
             queue.Enqueue(index);
         }
+    }
+
+    private static bool IsLikelyEdgeArtifact(ComponentBounds component, int width, int height)
+    {
+        var nearLeft = component.X <= 3;
+        var nearRight = component.X + component.Width >= width - 4;
+        var nearTop = component.Y <= 3;
+        var nearBottom = component.Y + component.Height >= height - 4;
+        var thinVertical = component.Width <= Math.Max(4, width / 220) &&
+                           component.Height >= height / 5;
+        var thinHorizontal = component.Height <= Math.Max(4, height / 220) &&
+                             component.Width >= width / 5;
+        return thinVertical && (nearLeft || nearRight) ||
+               thinHorizontal && (nearTop || nearBottom);
     }
 
     private static string SanitizeFigureId(string value)
@@ -324,6 +415,31 @@ internal static class GeoGebraRenderer
         }
     }
 
+    private static async Task<bool> WaitForExitAsync(
+        Process process,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var waitTask = process.WaitForExitAsync(cancellationToken);
+        var completed = await Task.WhenAny(waitTask, Task.Delay(timeout));
+        if (completed != waitTask) return false;
+        await waitTask;
+        return true;
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // GeoGebra rendering can safely fall back when the browser process is already gone.
+        }
+    }
+
     private sealed record SourceImageBounds(int X, int Y, int Width, int Height, int SourceWidth, int SourceHeight);
     private sealed record ComponentBounds(int X, int Y, int Width, int Height, int Area);
+    private sealed record PointCoordinate(double X, double Y);
 }

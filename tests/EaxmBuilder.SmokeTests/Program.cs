@@ -236,6 +236,12 @@ try
         ["说明：下面是复核结果。\n```json\n{\"passed\":true,\"summary\":\"ok\",\"issues\":[],\"correctedDocument\":null}\n```\n已完成。"]);
     if (wrappedReview is null || !wrappedReview.Passed || wrappedReview.Summary != "ok")
         throw new InvalidOperationException("AI 复核 JSON 外包文字未能被容错解析。");
+    var structuredReview = (OutputReviewResult?)deserializeJson.Invoke(null,
+        ["{\"passed\":false,\"summary\":\"发现问题\",\"issues\":[{\"severity\":\"high\",\"location\":\"Figures[0]\",\"description\":\"端点未连接\",\"correction\":\"复用同一命名点\"}],\"correctedDocument\":null}"]);
+    if (structuredReview?.Issues.Count != 1 ||
+        structuredReview.Issues[0].Severity != "high" ||
+        structuredReview.Issues[0].Description != "端点未连接")
+        throw new InvalidOperationException("AI 复核中的结构化 issues 无法解析。");
     try
     {
         _ = new AiProviderFactory(new SettingsStore()).Create(new AppSettings

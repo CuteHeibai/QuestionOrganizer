@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace EaxmBuilder.Core;
@@ -47,6 +48,62 @@ public sealed class OutputReviewResult
 {
     public bool Passed { get; set; } = true;
     public string Summary { get; set; } = string.Empty;
-    public List<string> Issues { get; set; } = [];
+    public List<OutputReviewIssue> Issues { get; set; } = [];
     public QuestionDocument? CorrectedDocument { get; set; }
+}
+
+[JsonConverter(typeof(OutputReviewIssueJsonConverter))]
+public sealed class OutputReviewIssue
+{
+    public string Severity { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Correction { get; set; } = string.Empty;
+}
+
+public sealed class OutputReviewIssueJsonConverter : JsonConverter<OutputReviewIssue>
+{
+    public override OutputReviewIssue Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+            return new OutputReviewIssue { Description = reader.GetString() ?? string.Empty };
+
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            using var value = JsonDocument.ParseValue(ref reader);
+            return new OutputReviewIssue { Description = value.RootElement.GetRawText() };
+        }
+
+        using var document = JsonDocument.ParseValue(ref reader);
+        var root = document.RootElement;
+        return new OutputReviewIssue
+        {
+            Severity = ReadString(root, "severity"),
+            Location = ReadString(root, "location"),
+            Description = ReadString(root, "description"),
+            Correction = ReadString(root, "correction")
+        };
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        OutputReviewIssue value,
+        JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("severity", value.Severity);
+        writer.WriteString("location", value.Location);
+        writer.WriteString("description", value.Description);
+        writer.WriteString("correction", value.Correction);
+        writer.WriteEndObject();
+    }
+
+    private static string ReadString(JsonElement value, string propertyName) =>
+        value.TryGetProperty(propertyName, out var property) &&
+        property.ValueKind == JsonValueKind.String
+            ? property.GetString() ?? string.Empty
+            : string.Empty;
 }

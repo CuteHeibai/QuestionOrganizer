@@ -12,7 +12,7 @@ dotnet run --project src/EaxmBuilder.App
 
 ## 打包
 
-项目发布为解压即用的 ZIP 包，不再使用 `Install.ps1` / `Uninstall.ps1`。
+项目发布为解压即用的 ZIP 包
 
 ```powershell
 dotnet publish src/EaxmBuilder.App -c Release -r win-x64 --self-contained true -o publish
