@@ -81,8 +81,8 @@ try
         var xml = await ReadEntryAsync(archive, "word/document.xml");
         if (CountOccurrences(xml, "已知圆 C 的方程为") < 2)
             throw new InvalidOperationException("追加到现有 Word 文档未写入题目正文。");
-        if (archive.GetEntry("word/media/question-figure-2.png") is null)
-            throw new InvalidOperationException("追加到现有 Word 文档时未避开已有图片文件名。");
+        if (archive.GetEntry("word/media/question-figure-2.svg") is null)
+            throw new InvalidOperationException("追加到现有 Word 文档时未避开已有矢量图文件名。");
     }
 
     var repository = new ProjectRepository();
@@ -183,8 +183,8 @@ try
     {
         var externalDocument = await repository.LoadDataAsync<QuestionDocument>(externalFallbackProject, "document.json")
                                ?? throw new InvalidOperationException("外部工具模式未保存 document.json。");
-        if (externalDocument.Figures.FirstOrDefault()?.Description != "内嵌 GeoGebra 绘制")
-            throw new InvalidOperationException("本地 GeoGebra bundle 存在时未使用内嵌 GeoGebra 绘制图形。");
+        if (externalDocument.Figures.FirstOrDefault()?.Description.Contains("GeoGebra", StringComparison.Ordinal) != true)
+            throw new InvalidOperationException("本地 GeoGebra bundle 存在时未使用 GeoGebra 命令绘制图形。");
     }
 
     Exception? animationError = null;
@@ -242,6 +242,26 @@ try
         structuredReview.Issues[0].Severity != "high" ||
         structuredReview.Issues[0].Description != "端点未连接")
         throw new InvalidOperationException("AI 复核中的结构化 issues 无法解析。");
+    var rendererType = typeof(ProcessingTaskManager).Assembly.GetType("EaxmBuilder.Services.GeoGebraRenderer")
+                       ?? throw new InvalidOperationException("无法检查 GeoGebra 矢量转换器。");
+    var vectorMethod = rendererType.GetMethod("TryCreateVectorSvg",
+        BindingFlags.Static | BindingFlags.NonPublic)
+                       ?? throw new InvalidOperationException("无法检查直角 Polyline 矢量转换器。");
+    var vectorArguments = new object?[]
+    {
+        "right-angle",
+        new List<string>
+        {
+            "A=(0,0)", "B=(2,0)", "C=(2,2)",
+            "P=(1.7,0)", "Q=(1.7,0.3)", "R=(2,0.3)",
+            "Segment(A,B)", "Segment(B,C)", "Polyline(P,Q,R)"
+        },
+        null
+    };
+    if (vectorMethod.Invoke(null, vectorArguments) is not true ||
+        vectorArguments[2] is not string vectorSvg ||
+        vectorSvg.Count(character => character == '<') < 6)
+        throw new InvalidOperationException("直角 Polyline 未转换为可用的纯 SVG 矢量图。");
     try
     {
         _ = new AiProviderFactory(new SettingsStore()).Create(new AppSettings
@@ -381,8 +401,8 @@ try
             xml.Contains("2026", StringComparison.Ordinal) ||
             xml.Contains("oMathPara", StringComparison.Ordinal))
             throw new InvalidOperationException("DOCX 未正确替换模板正文、公式、图形或二倍行距设置。");
-        if (archive.GetEntry("word/media/question-figure-1.png") is null)
-            throw new InvalidOperationException("DOCX 缺少渲染后的图形图片。");
+        if (archive.GetEntry("word/media/question-figure-1.svg") is null)
+            throw new InvalidOperationException("DOCX 缺少嵌入的 SVG 矢量图。");
         var relationshipEntry = archive.GetEntry("word/_rels/document.xml.rels")
             ?? throw new InvalidOperationException("DOCX 缺少正文关系文件。");
         if (!(await ReadEntryAsync(archive, "word/_rels/document.xml.rels")).Contains("relationships/image", StringComparison.Ordinal))

@@ -25,6 +25,15 @@ internal static class GeoGebraRenderer
     private static readonly Regex SegmentCommandPattern = new(
         @"^\s*(?:Segment|Line|Ray|Vector|Polygon|Polyline)\s*\(",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex NamedSegmentPattern = new(
+        @"^\s*Segment\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*([A-Za-z][A-Za-z0-9_]*)\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex NamedPolygonPattern = new(
+        @"^\s*(?:Polygon|Polyline)\s*\(\s*(.*?)\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex TextAtPointPattern = new(
+        @"^\s*Text\s*\(\s*""([^""]+)""\s*,\s*([A-Za-z][A-Za-z0-9_]*)(?:\s*\+\s*\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\))?\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     public static async Task<FigureDocument?> RenderAsync(
         QuestionProject project,
@@ -36,6 +45,16 @@ internal static class GeoGebraRenderer
         var normalizedCommands = NormalizeCommands(figure.GeoGebraCommands);
         var commandPath = Path.Combine(project.DirectoryPath, $"{SanitizeFigureId(figure.Id)}.geogebra.txt");
         await File.WriteAllLinesAsync(commandPath, normalizedCommands, cancellationToken);
+        if (TryCreateVectorSvg(figure.Id, normalizedCommands, out var vectorSvg))
+        {
+            return new FigureDocument
+            {
+                Id = figure.Id,
+                Description = "GeoGebra 命令矢量绘制",
+                GeoGebraCommands = normalizedCommands.ToList(),
+                Svg = vectorSvg
+            };
+        }
 
         var deployPath = ResolveDeployScriptPath();
         var edgePath = PdfExporter.FindEdge();
@@ -94,18 +113,81 @@ internal static class GeoGebraRenderer
         }
     }
 
-    private static IReadOnlyList<string> NormalizeCommands(IReadOnlyList<string> commands)
+    private static bool TryCreateVectorSvg(string figureId, IReadOnlyList<string> commands, out string svg)
     {
-        var points = new Dictionary<string, PointCoordinate>(StringComparer.OrdinalIgnoreCase);
+        svg = string.Empty;
+        var points = ReadNamedPoints(commands);
+        if (points.Count == 0) return false;
+
+        var segments = new List<(PointCoordinate Start, PointCoordinate End)>();
+        var labels = new List<(string Text, PointCoordinate Position)>();
         foreach (var command in commands)
         {
-            var match = PointDefinitionPattern.Match(command);
-            if (!match.Success) continue;
-            if (!TryParseCoordinate(match.Groups[2].Value, out var x) ||
-                !TryParseCoordinate(match.Groups[3].Value, out var y)) continue;
-            points[match.Groups[1].Value] = new PointCoordinate(x, y);
+            var segment = NamedSegmentPattern.Match(command);
+            if (segment.Success &&
+                points.TryGetValue(segment.Groups[1].Value, out var start) &&
+                points.TryGetValue(segment.Groups[2].Value, out var end))
+            {
+                segments.Add((start, end));
+                continue;
+            }
+
+            var polygon = NamedPolygonPattern.Match(command);
+            if (polygon.Success)
+            {
+                var polygonPoints = polygon.Groups[1].Value
+                    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Where(points.ContainsKey)
+                    .Select(name => points[name])
+                    .ToArray();
+                for (var index = 1; index < polygonPoints.Length; index++)
+                    segments.Add((polygonPoints[index - 1], polygonPoints[index]));
+                if (polygonPoints.Length > 2 && !command.StartsWith("Polyline", StringComparison.OrdinalIgnoreCase))
+                    segments.Add((polygonPoints[^1], polygonPoints[0]));
+                continue;
+            }
+
+            var label = TextAtPointPattern.Match(command);
+            if (!label.Success || !points.TryGetValue(label.Groups[2].Value, out var point)) continue;
+            var dx = TryParseCoordinate(label.Groups[3].Value, out var parsedDx) ? parsedDx : 0;
+            var dy = TryParseCoordinate(label.Groups[4].Value, out var parsedDy) ? parsedDy : 0;
+            labels.Add((label.Groups[1].Value, new PointCoordinate(point.X + dx, point.Y + dy)));
         }
 
+        if (segments.Count == 0) return false;
+
+        var allPoints = points.Values.Concat(labels.Select(item => item.Position)).ToArray();
+        var minX = allPoints.Min(item => item.X);
+        var maxX = allPoints.Max(item => item.X);
+        var minY = allPoints.Min(item => item.Y);
+        var maxY = allPoints.Max(item => item.Y);
+        if (Math.Abs(maxX - minX) < 0.001 || Math.Abs(maxY - minY) < 0.001) return false;
+
+        const double width = 720;
+        const double margin = 42;
+        var scale = (width - margin * 2) / Math.Max(maxX - minX, 0.001);
+        var height = Math.Clamp((maxY - minY) * scale + margin * 2, 180, 520);
+
+        string X(PointCoordinate point) => Format((point.X - minX) * scale + margin);
+        string Y(PointCoordinate point) => Format(height - ((point.Y - minY) * scale + margin));
+        var builder = new StringBuilder();
+        builder.Append(CultureInfo.InvariantCulture, $"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {Format(width)} {Format(height)}" width="{Format(width)}" height="{Format(height)}">""");
+        builder.Append("""<rect width="100%" height="100%" fill="#ffffff"/>""");
+        builder.Append("""<g fill="none" stroke="#202020" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">""");
+        foreach (var (start, end) in segments)
+            builder.Append(CultureInfo.InvariantCulture, $"""<line x1="{X(start)}" y1="{Y(start)}" x2="{X(end)}" y2="{Y(end)}"/>""");
+        builder.Append("</g>");
+        builder.Append("""<g fill="#202020" font-family="SimSun, 宋体, Songti SC, STSong, serif" font-size="24">""");
+        foreach (var label in labels)
+            builder.Append(CultureInfo.InvariantCulture, $"""<text x="{X(label.Position)}" y="{Y(label.Position)}">{WebUtility.HtmlEncode(label.Text)}</text>""");
+        builder.Append("</g></svg>");
+        svg = builder.ToString();
+        return true;
+    }
+
+    private static IReadOnlyList<string> NormalizeCommands(IReadOnlyList<string> commands)
+    {
+        var points = ReadNamedPoints(commands);
         if (points.Count == 0) return commands.ToArray();
 
         return commands
@@ -131,12 +213,28 @@ internal static class GeoGebraRenderer
     private static bool TryParseCoordinate(string value, out double result) =>
         double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
 
+    private static Dictionary<string, PointCoordinate> ReadNamedPoints(IReadOnlyList<string> commands)
+    {
+        var points = new Dictionary<string, PointCoordinate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var command in commands)
+        {
+            var match = PointDefinitionPattern.Match(command);
+            if (!match.Success) continue;
+            if (!TryParseCoordinate(match.Groups[2].Value, out var x) ||
+                !TryParseCoordinate(match.Groups[3].Value, out var y)) continue;
+            points[match.Groups[1].Value] = new PointCoordinate(x, y);
+        }
+        return points;
+    }
+
     private static double DistanceSquared(PointCoordinate point, double x, double y)
     {
         var dx = point.X - x;
         var dy = point.Y - y;
         return dx * dx + dy * dy;
     }
+
+    private static string Format(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
 
     private static string CreateHtml(string deployPath, IReadOnlyList<string> commands)
     {

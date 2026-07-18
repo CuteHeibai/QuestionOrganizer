@@ -771,10 +771,13 @@ public partial class MainWindow : Window
 
     private void UpdateFigureModeHint(FigureProcessingMode mode)
     {
+        FigureModeHintText.Foreground = mode == FigureProcessingMode.ExternalToolThenOriginalImage
+            ? (Brush)FindResource("ErrorBrush")
+            : (Brush)FindResource("MutedBrush");
         FigureModeHintText.Text = mode switch
         {
             FigureProcessingMode.AiRedraw => "AI 会生成可缩放 SVG，适合几何图和函数图；复杂绳结或拓扑图可能需要人工复核。",
-            FigureProcessingMode.ExternalToolThenOriginalImage => "先尝试 QUESTION_ORGANIZER_FIGURE_TOOL 指定的外部绘图工具；未配置或失败时自动保留原图，避免流程卡住。",
+            FigureProcessingMode.ExternalToolThenOriginalImage => "不建议使用：外部工具绘图目前可能出现坐标偏移、线段未连接或直角符号异常。仅用于实验，失败时会保留原图。",
             FigureProcessingMode.OriginalImage => "跳过 AI 重绘，直接把源图作为图形保留。最接近原题，但不是可编辑矢量图；多图精确裁切仍需后续坐标识别。",
             _ => string.Empty
         };

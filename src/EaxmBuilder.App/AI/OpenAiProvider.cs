@@ -221,7 +221,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             要求：
             1. 默认只用 Segment 绘制有限线段，禁止把有限线段写成 Line 或 Ray；只有原图明确是无限直线时才可使用 Line；
             2. 禁止使用 Angle 命令自动生成角度标注；除非原图明确画了角弧或角度数值，否则不要标角；
-            3. 直角标记必须用 2 到 3 条短 Segment 或小 Polygon 手动画成方角，不要用 Angle(A,B,C) 生成圆弧角标；
+            3. 直角标记优先用 Polyline(P1,P2,P3) 或 2 到 3 条短 Segment 手动画成方角；只有明确需要闭合小方框时才用四点 Polygon，不要用 Angle(A,B,C) 生成圆弧角标；
             4. 端点只作为构造点存在，不要依赖 GeoGebra 自动显示点标签或明显圆点；点名必须用 Text("A", A + (-0.2,0.2)) 手动标注；
             5. 所有线条和文字最终会被统一成黑色，请不要使用彩色样式；
             6. 点名、线段、垂线、角平分线、坐标轴、标注位置要尽量贴近原图；

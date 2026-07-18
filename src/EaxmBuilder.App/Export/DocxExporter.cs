@@ -154,13 +154,19 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         QuestionDocument document,
         CancellationToken cancellationToken)
     {
-        var edgePath = PdfExporter.FindEdge()
-                       ?? throw new InvalidOperationException("未找到 Microsoft Edge，无法为 Word 渲染图形。");
         var rendered = new List<RenderedFigure>();
         foreach (var figure in document.Figures.Where(item => !string.IsNullOrWhiteSpace(item.Svg)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (pixelWidth, pixelHeight) = ReadSvgPixelSize(figure.Svg);
+            if (IsEmbeddableVectorSvg(figure.Svg))
+            {
+                rendered.Add(new RenderedFigure(figure.Id, string.Empty, string.Empty, pixelWidth, pixelHeight, figure.Svg, "svg"));
+                continue;
+            }
+
+            var edgePath = PdfExporter.FindEdge()
+                           ?? throw new InvalidOperationException("未找到 Microsoft Edge，无法为 Word 渲染图形。");
             var token = Guid.NewGuid().ToString("N");
             var htmlPath = Path.Combine(Path.GetTempPath(), $"QuestionOrganizer-{token}.html");
             var pngPath = Path.Combine(Path.GetTempPath(), $"QuestionOrganizer-{token}.png");
@@ -186,7 +192,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
             if (process.ExitCode != 0 || !File.Exists(pngPath))
                 throw new InvalidOperationException($"图形 {figure.Id} 无法渲染为 Word 图片。");
             EnsureNonBlankPng(pngPath, figure.Id);
-            rendered.Add(new RenderedFigure(figure.Id, htmlPath, pngPath, pixelWidth, pixelHeight));
+            rendered.Add(new RenderedFigure(figure.Id, htmlPath, pngPath, pixelWidth, pixelHeight, string.Empty, "png"));
         }
         return rendered;
     }
@@ -206,6 +212,12 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         {
             contentTypeRoot.Add(new XElement(Ct + "Default",
                 new XAttribute("Extension", "png"), new XAttribute("ContentType", "image/png")));
+        }
+        if (!contentTypeRoot.Elements(Ct + "Default")
+                .Any(item => string.Equals((string?)item.Attribute("Extension"), "svg", StringComparison.OrdinalIgnoreCase)))
+        {
+            contentTypeRoot.Add(new XElement(Ct + "Default",
+                new XAttribute("Extension", "svg"), new XAttribute("ContentType", "image/svg+xml")));
         }
 
         var documentOverride = contentTypeRoot.Elements(Ct + "Override")
@@ -231,13 +243,23 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
             string fileName;
             do
             {
-                fileName = $"question-figure-{mediaIndex++}.png";
+                fileName = $"question-figure-{mediaIndex++}.{renderedFigure.Extension}";
             } while (!usedMediaNames.Add(fileName));
             var relationshipId = $"rId{relationshipNumber++}";
             var mediaEntry = archive.CreateEntry($"word/media/{fileName}", CompressionLevel.Optimal);
-            using (var input = File.OpenRead(renderedFigure.PngPath))
             using (var output = mediaEntry.Open())
-                input.CopyTo(output);
+            {
+                if (renderedFigure.Extension == "svg")
+                {
+                    using var writer = new StreamWriter(output, new UTF8Encoding(false));
+                    writer.Write(renderedFigure.Svg);
+                }
+                else
+                {
+                    using var input = File.OpenRead(renderedFigure.PngPath);
+                    input.CopyTo(output);
+                }
+            }
 
             relationshipRoot.Add(new XElement(Rel + "Relationship",
                 new XAttribute("Id", relationshipId),
@@ -664,6 +686,21 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         }
     }
 
+    private static bool IsEmbeddableVectorSvg(string svg)
+    {
+        try
+        {
+            var document = XDocument.Parse(svg);
+            var root = document.Root;
+            if (root is null || root.Name.LocalName != "svg") return false;
+            return !root.Descendants().Any(element => element.Name.LocalName == "image");
+        }
+        catch (System.Xml.XmlException)
+        {
+            return false;
+        }
+    }
+
     private static void EnsureNonBlankPng(string path, string figureId)
     {
         using var stream = File.OpenRead(path);
@@ -702,6 +739,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
 
     private static void TryDelete(string path)
     {
+        if (string.IsNullOrWhiteSpace(path)) return;
         try { File.Delete(path); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
 
@@ -715,7 +753,9 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         string HtmlPath,
         string PngPath,
         int PixelWidth,
-        int PixelHeight);
+        int PixelHeight,
+        string Svg,
+        string Extension);
 
     private sealed record FigureAsset(
         string RelationshipId,
