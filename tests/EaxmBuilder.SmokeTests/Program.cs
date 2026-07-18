@@ -13,6 +13,7 @@ using EaxmBuilder.Infrastructure;
 using EaxmBuilder.Services;
 
 var output = Path.Combine(Path.GetTempPath(), "QuestionOrganizer-Smoke-" + Guid.NewGuid().ToString("N"));
+var finalOutput = Path.Combine(output, "final-output");
 Directory.CreateDirectory(output);
 var previousFigureTool = Environment.GetEnvironmentVariable("QUESTION_ORGANIZER_FIGURE_TOOL");
 var previousGeoGebraPath = Environment.GetEnvironmentVariable("QUESTION_ORGANIZER_GEOGEBRA_PATH");
@@ -23,7 +24,12 @@ try
     {
         Name = "Question21",
         DirectoryPath = output,
-        AiInstructions = "保留原题编号，不生成答案。"
+        AiInstructions = "保留原题编号，不生成答案。",
+        OutputSelection =
+        {
+            FileName = "custom-question",
+            OutputDirectory = finalOutput
+        }
     };
     var document = new QuestionDocument
     {
@@ -43,6 +49,7 @@ try
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\customstar+\widearc{AB}" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "如图，angle ABC和angle ADC的角平分线分别交AD、BC于E、F。过F作FG perp BE于G。" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "（2）若GF = sqrt2，HF = (1)/(2)，求triangle DHF的面积；" },
+            new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = @"补充：若 AB=\sqrt{2}，求 \triangle ABC 的面积。" },
             new QuestionBlock { Type = QuestionBlockType.Figure, FigureId = "figure1" }
         ],
         Figures =
@@ -57,6 +64,7 @@ try
     };
 
     await SvgWriter.WriteAllAsync(project, document.Figures, CancellationToken.None);
+    await SvgWriter.WriteFinalOutputsAsync(project, document.Figures, CancellationToken.None);
     var compactFigure = new FigureDocument
     {
         Id = "compact",
@@ -72,7 +80,7 @@ try
     await new PdfExporter().ExportAsync(project, document, CancellationToken.None);
 
     var appendTarget = Path.Combine(output, "append-target.docx");
-    File.Copy(Path.Combine(output, "question.docx"), appendTarget);
+    File.Copy(Path.Combine(finalOutput, "custom-question.docx"), appendTarget);
     await new DocxExporter(new WordExportOptions(
         CreateStandalone: false,
         AppendToWordPath: appendTarget)).ExportAsync(project, document, CancellationToken.None);
@@ -86,28 +94,46 @@ try
     }
 
     var repository = new ProjectRepository();
+    await File.WriteAllBytesAsync(
+        Path.Combine(output, "create-source.png"),
+        Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="));
+    var createdProject = await repository.CreateAsync(Path.Combine(output, "create-source.png"), output);
+    if (!createdProject.OutputSelection.OutputDirectory.StartsWith(
+            Path.Combine(output, "最终输出"), StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("新项目未使用设置目录下的最终输出文件夹。");
     await repository.SaveAsync(project);
-    var reloaded = (await repository.GetRecentAsync(output)).Single();
+    var reloaded = (await repository.GetRecentAsync(output)).Single(item => item.Id == project.Id);
     if (reloaded.AiInstructions != project.AiInstructions)
         throw new InvalidOperationException("项目级 AI 要求未能持久化。");
 
     project.Steps[TaskStep.Ocr].State = StepState.Running;
     await repository.SaveAsync(project);
-    reloaded = (await repository.GetRecentAsync(output, activeProjectIds: new HashSet<Guid> { project.Id })).Single();
+    reloaded = (await repository.GetRecentAsync(output, activeProjectIds: new HashSet<Guid> { project.Id }))
+        .Single(item => item.Id == project.Id);
     if (reloaded.Steps[TaskStep.Ocr].State != StepState.Running)
         throw new InvalidOperationException("当前仍在运行的项目被错误显示为任务中断。");
-    reloaded = (await repository.GetRecentAsync(output)).Single();
+    reloaded = (await repository.GetRecentAsync(output)).Single(item => item.Id == project.Id);
     if (reloaded.Steps[TaskStep.Ocr].State != StepState.Failed)
         throw new InvalidOperationException("中断的运行状态未恢复为可重试状态。");
 
     var selectedOutputDirectory = Path.Combine(output, "selected-output");
+    var selectedFinalOutputDirectory = Path.Combine(selectedOutputDirectory, "final");
     Directory.CreateDirectory(selectedOutputDirectory);
     var selectedOutputProject = new QuestionProject
     {
         Name = "SelectedOutput",
         DirectoryPath = selectedOutputDirectory,
         SourceFileName = "source.png",
-        OutputSelection = new OutputSelection { Word = true, Pdf = false, Latex = false, Json = false }
+        OutputSelection = new OutputSelection
+        {
+            Word = true,
+            Pdf = false,
+            Latex = false,
+            Json = false,
+            Svg = false,
+            FileName = "OnlyWord",
+            OutputDirectory = selectedFinalOutputDirectory
+        }
     };
     selectedOutputProject.Steps[TaskStep.Ocr].State = StepState.Completed;
     selectedOutputProject.Steps[TaskStep.FormulaRecognition].State = StepState.Completed;
@@ -118,8 +144,10 @@ try
         new FakeAiProvider(),
         [new DocxExporter(), new PdfExporter(), new LatexExporter(), new JsonExporter()])
         .RunPendingAsync(selectedOutputProject);
-    if (!File.Exists(Path.Combine(selectedOutputDirectory, "question.docx")) ||
-        File.Exists(Path.Combine(selectedOutputDirectory, "question.pdf")) ||
+    if (!File.Exists(Path.Combine(selectedFinalOutputDirectory, "OnlyWord.docx")) ||
+        File.Exists(Path.Combine(selectedFinalOutputDirectory, "OnlyWord.pdf")) ||
+        File.Exists(Path.Combine(selectedFinalOutputDirectory, "OnlyWord.json")) ||
+        File.Exists(Path.Combine(selectedFinalOutputDirectory, "OnlyWord-figure1.svg")) ||
         selectedOutputProject.Steps[TaskStep.PdfExport].State != StepState.Skipped ||
         selectedOutputProject.Steps[TaskStep.LatexExport].State != StepState.Skipped ||
         selectedOutputProject.Steps[TaskStep.JsonExport].State != StepState.Skipped ||
@@ -237,11 +265,27 @@ try
     if (wrappedReview is null || !wrappedReview.Passed || wrappedReview.Summary != "ok")
         throw new InvalidOperationException("AI 复核 JSON 外包文字未能被容错解析。");
     var structuredReview = (OutputReviewResult?)deserializeJson.Invoke(null,
-        ["{\"passed\":false,\"summary\":\"发现问题\",\"issues\":[{\"severity\":\"high\",\"location\":\"Figures[0]\",\"description\":\"端点未连接\",\"correction\":\"复用同一命名点\"}],\"correctedDocument\":null}"]);
+        ["{\"passed\":false,\"summary\":\"发现问题\",\"issues\":[{\"severity\":\"high\",\"type\":\"figure_missing\",\"message\":\"端点未连接\",\"correction\":\"复用同一命名点\"}],\"correctedDocument\":{\"Blocks\":[{\"Type\":\"FigureRef\",\"FigureId\":\"fig1\",\"Caption\":\"图1\"}]}}"]);
     if (structuredReview?.Issues.Count != 1 ||
         structuredReview.Issues[0].Severity != "high" ||
-        structuredReview.Issues[0].Description != "端点未连接")
+        structuredReview.Issues[0].Description != "端点未连接" ||
+        structuredReview.CorrectedDocument?.Blocks.FirstOrDefault()?.Type != QuestionBlockType.Figure)
         throw new InvalidOperationException("AI 复核中的结构化 issues 无法解析。");
+    var reversedSymbolDocument = new QuestionDocument
+    {
+        LatexSymbolMap = new Dictionary<string, string>
+        {
+            ["√"] = @"\sqrt{}",
+            ["triangle"] = "△",
+            [@"\perp"] = "⊥"
+        }
+    };
+    QuestionDocumentNormalizer.NormalizeLatexSymbolMap(reversedSymbolDocument);
+    if (!reversedSymbolDocument.LatexSymbolMap.TryGetValue(@"\sqrt", out var sqrtSymbol) ||
+        sqrtSymbol != "√" ||
+        !reversedSymbolDocument.LatexSymbolMap.ContainsKey(@"\triangle") ||
+        !reversedSymbolDocument.LatexSymbolMap.ContainsKey(@"\perp"))
+        throw new InvalidOperationException("AI 返回的反向 latexSymbolMap 未能自动纠正。");
     var rendererType = typeof(ProcessingTaskManager).Assembly.GetType("EaxmBuilder.Services.GeoGebraRenderer")
                        ?? throw new InvalidOperationException("无法检查 GeoGebra 矢量转换器。");
     var vectorMethod = rendererType.GetMethod("TryCreateVectorSvg",
@@ -260,8 +304,28 @@ try
     };
     if (vectorMethod.Invoke(null, vectorArguments) is not true ||
         vectorArguments[2] is not string vectorSvg ||
-        vectorSvg.Count(character => character == '<') < 6)
+        vectorSvg.Count(character => character == '<') < 6 ||
+        vectorSvg.Contains("stroke=\"#ffffff\"", StringComparison.OrdinalIgnoreCase))
         throw new InvalidOperationException("直角 Polyline 未转换为可用的纯 SVG 矢量图。");
+    var computedPointArguments = new object?[]
+    {
+        "computed-points",
+        new List<string>
+        {
+            "A=(0,4)", "B=(0,0)", "C=(4,0)", "D=(4,4)",
+            "O=Intersect(Segment(A,C),Segment(B,D))",
+            "E=Midpoint(O,D)",
+            "Segment(A,C)", "Segment(B,D)", "Segment(A,E)",
+            "Text(\"O\",O+(0.12,-0.12))", "Text(\"E\",E+(0.12,0.12))", "Text(\"图1\",(2,-0.45))"
+        },
+        null
+    };
+    if (vectorMethod.Invoke(null, computedPointArguments) is not true ||
+        computedPointArguments[2] is not string computedPointSvg ||
+        !computedPointSvg.Contains(">O<", StringComparison.Ordinal) ||
+        !computedPointSvg.Contains(">E<", StringComparison.Ordinal) ||
+        !computedPointSvg.Contains(">图1<", StringComparison.Ordinal))
+        throw new InvalidOperationException("GeoGebra 计算点或坐标文字未转换为可用 SVG。");
     try
     {
         _ = new AiProviderFactory(new SettingsStore()).Create(new AppSettings
@@ -374,15 +438,20 @@ try
         // Expected: failed Responses payloads should expose the upstream error directly.
     }
 
-    RequireFile("figure1.svg");
-    RequireFile("metadata.json");
-    RequireFile("question.tex");
-    RequireFile("question.docx");
-    RequireFile("question.html");
-    RequireFile("question.pdf");
+    RequireProjectFile("figure1.svg");
+    RequireProjectFile("question.html");
+    RequireFinalFile("custom-question-figure1.svg");
+    RequireFinalFile("custom-question.json");
+    RequireFinalFile("custom-question.tex");
+    RequireFinalFile("custom-question.docx");
+    RequireFinalFile("custom-question.pdf");
+    if (File.Exists(Path.Combine(finalOutput, "question.html")) ||
+        File.Exists(Path.Combine(finalOutput, "document.json")) ||
+        File.Exists(Path.Combine(finalOutput, "review.json")))
+        throw new InvalidOperationException("最终输出目录不应包含过渡文件。");
 
-    XDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "figure1.svg")));
-    using (var metadata = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "metadata.json"))))
+    XDocument.Parse(await File.ReadAllTextAsync(Path.Combine(finalOutput, "custom-question-figure1.svg")));
+    using (var metadata = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(finalOutput, "custom-question.json"))))
     {
         if (!metadata.RootElement.TryGetProperty("LatexSymbolMap", out var symbolMap) ||
             !symbolMap.TryGetProperty(@"\customstar", out var customStar) ||
@@ -390,7 +459,7 @@ try
             throw new InvalidOperationException("题目级 LaTeX 符号映射未写入 metadata.json。");
     }
 
-    using (var archive = ZipFile.OpenRead(Path.Combine(output, "question.docx")))
+    using (var archive = ZipFile.OpenRead(Path.Combine(finalOutput, "custom-question.docx")))
     {
         var documentEntry = archive.GetEntry("word/document.xml")
             ?? throw new InvalidOperationException("DOCX 缺少 word/document.xml");
@@ -416,7 +485,9 @@ try
             !xml.Contains("FG ⊥ BE", StringComparison.Ordinal) ||
             !xml.Contains("<m:rad>", StringComparison.Ordinal) ||
             !xml.Contains("<m:f>", StringComparison.Ordinal) ||
-            !xml.Contains("△ DHF", StringComparison.Ordinal))
+            !xml.Contains("△ DHF", StringComparison.Ordinal) ||
+            xml.Contains(@"\sqrt", StringComparison.Ordinal) ||
+            xml.Contains(@"\triangle", StringComparison.Ordinal))
             throw new InvalidOperationException("DOCX 正文中的裸 LaTeX/OCR 命令未能解析为数学符号或结构化公式。");
     }
 
@@ -450,7 +521,7 @@ try
         throw new InvalidOperationException("段落正文中的裸 LaTeX/OCR 命令未能解析为数学符号或结构化公式。");
 
     var pdfHeader = new byte[4];
-    await using (var stream = File.OpenRead(Path.Combine(output, "question.pdf")))
+    await using (var stream = File.OpenRead(Path.Combine(finalOutput, "custom-question.pdf")))
         _ = await stream.ReadAsync(pdfHeader);
     if (Encoding.ASCII.GetString(pdfHeader) != "%PDF")
         throw new InvalidOperationException("PDF 文件头无效。");
@@ -458,11 +529,18 @@ try
     Console.WriteLine("PASS: API routing, selected outputs, append Word, recovery, spinner, persistence and all exporters");
     return 0;
 
-    void RequireFile(string fileName)
+    void RequireProjectFile(string fileName)
     {
         var path = Path.Combine(output, fileName);
         if (!File.Exists(path) || new FileInfo(path).Length == 0)
             throw new InvalidOperationException($"缺少导出文件：{fileName}");
+    }
+
+    void RequireFinalFile(string fileName)
+    {
+        var path = Path.Combine(finalOutput, fileName);
+        if (!File.Exists(path) || new FileInfo(path).Length == 0)
+            throw new InvalidOperationException($"缺少最终导出文件：{fileName}");
     }
 
     static async Task<string> ReadEntryAsync(ZipArchive archive, string entryName)

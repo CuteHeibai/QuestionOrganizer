@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Xml.Linq;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using EaxmBuilder.AI;
@@ -31,6 +32,7 @@ public sealed class ProcessingTaskManager(
 
     public async Task RunPendingAsync(QuestionProject project, CancellationToken cancellationToken = default)
     {
+        ProjectOutputPaths.ClearFinalOutputs(project);
         foreach (var step in OrderedSteps)
         {
             if (project.Steps[step].State == StepState.Completed) continue;
@@ -235,41 +237,55 @@ public sealed class ProcessingTaskManager(
         QuestionDocument document,
         CancellationToken cancellationToken)
     {
-        var sourceSvg = await CreateSourceImageSvgAsync(project.SourcePath, cancellationToken);
-        return GetFigureIds(document)
+        var ids = GetFigureIds(document);
+        var sourceSvgs = await CreateSourceImageSvgsAsync(project.SourcePath, ids, cancellationToken);
+        return ids
             .Select(id => new FigureDocument
             {
                 Id = id,
                 Description = "原图几何图裁剪，未进行 AI 重绘",
-                Svg = sourceSvg
+                Svg = sourceSvgs.TryGetValue(id, out var svg) ? svg : sourceSvgs.Values.FirstOrDefault() ?? string.Empty
             })
             .ToList();
     }
 
-    private static async Task<string> CreateSourceImageSvgAsync(string sourcePath, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyDictionary<string, string>> CreateSourceImageSvgsAsync(
+        string sourcePath,
+        IReadOnlyList<string> figureIds,
+        CancellationToken cancellationToken)
     {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
         if (extension is not ".png" and not ".jpg" and not ".jpeg")
         {
-            return """
+            var fallbackSvg = """
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0,0,640,160">
                   <rect width="640" height="160" fill="#ffffff"/>
                   <text x="24" y="84" font-family="SimSun, 宋体, serif" font-size="20" fill="#202020">原文件为 PDF，当前无法直接嵌入裁切图，请改用 AI 重绘或外部工具。</text>
                 </svg>
                 """;
+            foreach (var id in figureIds) result[id] = fallbackSvg;
+            return result;
         }
 
         var bytes = await File.ReadAllBytesAsync(sourcePath, cancellationToken);
-        var bounds = ReadImageBounds(sourcePath);
         var mediaType = extension == ".png" ? "image/png" : "image/jpeg";
         var encoded = Convert.ToBase64String(bytes);
         var safeName = WebUtility.HtmlEncode(Path.GetFileName(sourcePath));
-        return $"""
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="{bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}" overflow="hidden">
-              <title>{safeName}</title>
-              <image href="data:{mediaType};base64,{encoded}" x="0" y="0" width="{bounds.SourceWidth}" height="{bounds.SourceHeight}" preserveAspectRatio="none"/>
-            </svg>
-            """;
+        var bounds = ReadFigureImageBounds(sourcePath, figureIds.Count);
+        if (bounds.Count == 0) bounds = [ReadImageBounds(sourcePath)];
+
+        for (var index = 0; index < figureIds.Count; index++)
+        {
+            var bound = bounds[Math.Min(index, bounds.Count - 1)];
+            result[figureIds[index]] = $"""
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="{bound.X},{bound.Y},{bound.Width},{bound.Height}" overflow="hidden">
+                  <title>{safeName}</title>
+                  <image href="data:{mediaType};base64,{encoded}" x="0" y="0" width="{bound.SourceWidth}" height="{bound.SourceHeight}" preserveAspectRatio="none"/>
+                </svg>
+                """;
+        }
+        return result;
     }
 
     private static SourceImageBounds ReadImageBounds(string path)
@@ -329,17 +345,118 @@ public sealed class ProcessingTaskManager(
         return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
     }
 
+    private static IReadOnlyList<SourceImageBounds> ReadFigureImageBounds(string path, int expectedCount)
+    {
+        if (expectedCount <= 0) return [];
+
+        var decoder = BitmapDecoder.Create(new Uri(path, UriKind.Absolute),
+            BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        BitmapSource source = decoder.Frames[0];
+        if (source.Format != PixelFormats.Bgra32)
+            source = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+
+        var width = Math.Max(1, source.PixelWidth);
+        var height = Math.Max(1, source.PixelHeight);
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        source.CopyPixels(pixels, stride, 0);
+
+        var dark = new bool[width * height];
+        var lowerStart = Math.Clamp(height * 52 / 100, 0, height - 1);
+        for (var y = lowerStart; y < height; y++)
+        {
+            var row = y * stride;
+            for (var x = 0; x < width; x++)
+            {
+                var index = row + x * 4;
+                var blue = pixels[index];
+                var green = pixels[index + 1];
+                var red = pixels[index + 2];
+                var alpha = pixels[index + 3];
+                var luminance = red * 0.299 + green * 0.587 + blue * 0.114;
+                if (alpha >= 16 && luminance < 175) dark[y * width + x] = true;
+            }
+        }
+
+        var components = FindComponents(dark, width, height, lowerStart)
+            .Where(component =>
+                component.Area >= Math.Max(60, width * height / 80_000) &&
+                component.Width >= width / 10 &&
+                component.Height >= height / 24 &&
+                !IsLikelyEdgeArtifact(component, width, height))
+            .OrderBy(component => component.Y)
+            .ThenBy(component => component.X)
+            .ToArray();
+        if (components.Length == 0) return [];
+
+        if (expectedCount == 1 && components.Length > 1)
+        {
+            var union = new ComponentBounds(
+                components.Min(component => component.X),
+                components.Min(component => component.Y),
+                components.Max(component => component.X + component.Width) - components.Min(component => component.X),
+                components.Max(component => component.Y + component.Height) - components.Min(component => component.Y),
+                components.Sum(component => component.Area));
+            components = [union];
+        }
+        else
+        {
+            components = components
+                .Take(expectedCount)
+                .OrderBy(component => component.X)
+                .ToArray();
+        }
+
+        var horizontalPadding = Math.Max(40, width / 24);
+        var topPadding = Math.Max(80, height / 20);
+        var bottomPadding = Math.Max(70, height / 24);
+        return components
+            .Select(component =>
+            {
+                var minX = Math.Max(0, component.X - horizontalPadding);
+                var minY = Math.Max(0, component.Y - topPadding);
+                var maxX = Math.Min(width - 1, component.X + component.Width - 1 + horizontalPadding);
+                var maxY = Math.Min(height - 1, component.Y + component.Height - 1 + bottomPadding);
+                return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
+            })
+            .ToArray();
+    }
+
     private static ComponentBounds FindRelevantComponentBounds(bool[] dark, int width, int height)
     {
-        var visited = new bool[dark.Length];
-        var queue = new Queue<int>();
+        var components = FindComponents(dark, width, height, 0);
         var minUnionX = width;
         var minUnionY = height;
         var maxUnionX = -1;
         var maxUnionY = -1;
         var unionArea = 0;
         var minArea = Math.Max(10, width * height / 120_000);
-        for (var start = 0; start < dark.Length; start++)
+        foreach (var component in components)
+        {
+            if (component.Area < minArea || IsLikelyEdgeArtifact(component, width, height)) continue;
+
+            minUnionX = Math.Min(minUnionX, component.X);
+            minUnionY = Math.Min(minUnionY, component.Y);
+            maxUnionX = Math.Max(maxUnionX, component.X + component.Width - 1);
+            maxUnionY = Math.Max(maxUnionY, component.Y + component.Height - 1);
+            unionArea += component.Area;
+        }
+        return unionArea == 0
+            ? new ComponentBounds(0, 0, width, height, 0)
+            : new ComponentBounds(
+                minUnionX,
+                minUnionY,
+                maxUnionX - minUnionX + 1,
+                maxUnionY - minUnionY + 1,
+                unionArea);
+    }
+
+    private static IReadOnlyList<ComponentBounds> FindComponents(bool[] dark, int width, int height, int minStartY)
+    {
+        var visited = new bool[dark.Length];
+        var queue = new Queue<int>();
+        var components = new List<ComponentBounds>();
+        for (var start = minStartY * width; start < dark.Length; start++)
         {
             if (!dark[start] || visited[start]) continue;
 
@@ -367,27 +484,13 @@ public sealed class ProcessingTaskManager(
                 Enqueue(x, y + 1);
             }
 
-            var component = new ComponentBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, area);
-            if (component.Area < minArea || IsLikelyEdgeArtifact(component, width, height)) continue;
-
-            minUnionX = Math.Min(minUnionX, component.X);
-            minUnionY = Math.Min(minUnionY, component.Y);
-            maxUnionX = Math.Max(maxUnionX, component.X + component.Width - 1);
-            maxUnionY = Math.Max(maxUnionY, component.Y + component.Height - 1);
-            unionArea += component.Area;
+            components.Add(new ComponentBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, area));
         }
-        return unionArea == 0
-            ? new ComponentBounds(0, 0, width, height, 0)
-            : new ComponentBounds(
-                minUnionX,
-                minUnionY,
-                maxUnionX - minUnionX + 1,
-                maxUnionY - minUnionY + 1,
-                unionArea);
+        return components;
 
         void Enqueue(int x, int y)
         {
-            if (x < 0 || y < 0 || x >= width || y >= height) return;
+            if (x < 0 || y < minStartY || x >= width || y >= height) return;
             var index = y * width + x;
             if (!dark[index] || visited[index]) return;
             visited[index] = true;
@@ -429,6 +532,7 @@ public sealed class ProcessingTaskManager(
     private async Task ReviewOutputsAsync(QuestionProject project, CancellationToken cancellationToken)
     {
         var document = await RequireDataAsync<QuestionDocument>(project, "document.json");
+        await SvgWriter.WriteFinalOutputsAsync(project, document.Figures, cancellationToken);
         var generatedFiles = await ReadGeneratedFilesAsync(project, cancellationToken);
         var review = await aiProvider.ReviewOutputsAsync(
             project.SourcePath,
@@ -444,7 +548,7 @@ public sealed class ProcessingTaskManager(
         if (review.Passed || review.CorrectedDocument is null) return;
 
         LogAdded?.Invoke("AI 复核发现问题，正在应用修正并重新导出...");
-        var corrected = review.CorrectedDocument;
+        var corrected = NormalizeReviewedDocument(document, review.CorrectedDocument);
         await SvgWriter.WriteAllAsync(project, corrected.Figures, cancellationToken);
         await repository.SaveDataAsync(project, "document.json", corrected);
         foreach (var exporter in exporters.Where(item => !IsDisabledExport(project, item.Step)))
@@ -455,6 +559,65 @@ public sealed class ProcessingTaskManager(
             exportRecord.Error = string.Empty;
             exportRecord.CompletedAt = DateTimeOffset.Now;
         }
+        await SvgWriter.WriteFinalOutputsAsync(project, corrected.Figures, cancellationToken);
+    }
+
+    private QuestionDocument NormalizeReviewedDocument(QuestionDocument original, QuestionDocument? corrected)
+    {
+        if (corrected is null) return original;
+
+        corrected.SchemaVersion = string.IsNullOrWhiteSpace(corrected.SchemaVersion) ? original.SchemaVersion : corrected.SchemaVersion;
+        corrected.Language = string.IsNullOrWhiteSpace(corrected.Language) ? original.Language : corrected.Language;
+        corrected.Blocks ??= [];
+        corrected.Figures ??= [];
+        if (corrected.Blocks.Count == 0) corrected.Blocks = original.Blocks;
+
+        QuestionDocumentNormalizer.NormalizeLatexSymbolMap(original);
+        QuestionDocumentNormalizer.NormalizeLatexSymbolMap(corrected);
+        foreach (var item in original.LatexSymbolMap)
+            corrected.LatexSymbolMap.TryAdd(item.Key, item.Value);
+
+        var originalFigures = original.Figures
+            .Where(figure => !string.IsNullOrWhiteSpace(figure.Id))
+            .ToDictionary(figure => figure.Id, StringComparer.OrdinalIgnoreCase);
+        var mergedFigures = new List<FigureDocument>();
+        foreach (var figure in corrected.Figures.Where(figure => !string.IsNullOrWhiteSpace(figure.Id)))
+        {
+            if (HasReadableSvg(figure.Svg))
+            {
+                mergedFigures.Add(figure);
+                continue;
+            }
+
+            if (originalFigures.TryGetValue(figure.Id, out var originalFigure) && HasReadableSvg(originalFigure.Svg))
+            {
+                mergedFigures.Add(originalFigure);
+                LogAdded?.Invoke($"AI 复核返回的 {figure.Id} 图形为空或不可解析，已保留原图形。");
+            }
+        }
+
+        foreach (var id in GetFigureIds(corrected))
+        {
+            if (mergedFigures.Any(figure => string.Equals(figure.Id, id, StringComparison.OrdinalIgnoreCase))) continue;
+            if (originalFigures.TryGetValue(id, out var originalFigure) && HasReadableSvg(originalFigure.Svg))
+                mergedFigures.Add(originalFigure);
+        }
+        corrected.Figures = mergedFigures;
+        return corrected;
+    }
+
+    private static bool HasReadableSvg(string svg)
+    {
+        if (string.IsNullOrWhiteSpace(svg)) return false;
+        try
+        {
+            var document = XDocument.Parse(svg);
+            return string.Equals(document.Root?.Name.LocalName, "svg", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static async Task<IReadOnlyDictionary<string, string>> ReadGeneratedFilesAsync(
@@ -462,23 +625,39 @@ public sealed class ProcessingTaskManager(
         CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var fileName in new[] { "document.json", "metadata.json", "question.html", "question.tex" })
+        foreach (var fileName in new[] { "document.json", "question.html" })
         {
             var path = Path.Combine(project.DirectoryPath, fileName);
             if (File.Exists(path))
                 result[fileName] = await File.ReadAllTextAsync(path, cancellationToken);
         }
 
-        foreach (var path in Directory.EnumerateFiles(project.DirectoryPath, "*.svg").Take(12))
+        foreach (var finalTextFile in new[]
+                 {
+                     (Name: ProjectOutputPaths.GetBaseFileName(project) + ".json", Path: ProjectOutputPaths.GetFilePath(project, ".json")),
+                     (Name: ProjectOutputPaths.GetBaseFileName(project) + ".tex", Path: ProjectOutputPaths.GetFilePath(project, ".tex"))
+                 })
         {
-            result[Path.GetFileName(path)] = await File.ReadAllTextAsync(path, cancellationToken);
+            if (File.Exists(finalTextFile.Path))
+                result[finalTextFile.Name] = await File.ReadAllTextAsync(finalTextFile.Path, cancellationToken);
         }
 
-        foreach (var fileName in new[] { "question.docx", "question.pdf" })
+        var finalDirectory = ProjectOutputPaths.GetFinalDirectory(project);
+        var baseName = ProjectOutputPaths.GetBaseFileName(project);
+        if (Directory.Exists(finalDirectory))
         {
-            var path = Path.Combine(project.DirectoryPath, fileName);
-            if (File.Exists(path))
-                result[fileName] = $"文件存在，大小 {new FileInfo(path).Length} 字节。";
+            foreach (var path in Directory.EnumerateFiles(finalDirectory, baseName + "-*.svg").Take(12))
+                result[Path.GetFileName(path)] = await File.ReadAllTextAsync(path, cancellationToken);
+        }
+
+        foreach (var finalFile in new[]
+                 {
+                     (Name: ProjectOutputPaths.GetBaseFileName(project) + ".docx", Path: ProjectOutputPaths.GetFilePath(project, ".docx")),
+                     (Name: ProjectOutputPaths.GetBaseFileName(project) + ".pdf", Path: ProjectOutputPaths.GetFilePath(project, ".pdf"))
+                 })
+        {
+            if (File.Exists(finalFile.Path))
+                result[finalFile.Name] = $"文件存在，大小 {new FileInfo(finalFile.Path).Length} 字节。";
         }
         return result;
     }

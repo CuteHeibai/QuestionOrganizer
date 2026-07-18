@@ -19,8 +19,7 @@ public sealed class JsonExporter : IQuestionExporter
         QuestionDocument document,
         CancellationToken cancellationToken)
     {
-        await using var stream = File.Create(Path.Combine(project.DirectoryPath, "metadata.json"));
+        await using var stream = File.Create(ProjectOutputPaths.GetFilePath(project, ".json"));
         await JsonSerializer.SerializeAsync(stream, document, Options, cancellationToken);
     }
 }
-

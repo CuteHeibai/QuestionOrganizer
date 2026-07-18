@@ -33,7 +33,7 @@ public sealed class LatexExporter : IQuestionExporter
         }
         content.AppendLine("\\end{document}");
         await File.WriteAllTextAsync(
-            Path.Combine(project.DirectoryPath, "question.tex"),
+            ProjectOutputPaths.GetFilePath(project, ".tex"),
             content.ToString(),
             new UTF8Encoding(true),
             cancellationToken);
@@ -46,4 +46,3 @@ public sealed class LatexExporter : IQuestionExporter
         .Replace("#", "\\#", StringComparison.Ordinal)
         .Replace("_", "\\_", StringComparison.Ordinal);
 }
-

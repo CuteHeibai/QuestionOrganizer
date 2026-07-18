@@ -34,6 +34,15 @@ internal static class GeoGebraRenderer
     private static readonly Regex TextAtPointPattern = new(
         @"^\s*Text\s*\(\s*""([^""]+)""\s*,\s*([A-Za-z][A-Za-z0-9_]*)(?:\s*\+\s*\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\))?\s*\)\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex TextAtCoordinatePattern = new(
+        @"^\s*Text\s*\(\s*""([^""]+)""\s*,\s*\(\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex MidpointPattern = new(
+        @"^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*Midpoint\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*([A-Za-z][A-Za-z0-9_]*)\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex IntersectSegmentsPattern = new(
+        @"^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*Intersect\s*\(\s*Segment\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*([A-Za-z][A-Za-z0-9_]*)\s*\)\s*,\s*Segment\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*([A-Za-z][A-Za-z0-9_]*)\s*\)\s*\)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     public static async Task<FigureDocument?> RenderAsync(
         QuestionProject project,
@@ -148,10 +157,19 @@ internal static class GeoGebraRenderer
             }
 
             var label = TextAtPointPattern.Match(command);
-            if (!label.Success || !points.TryGetValue(label.Groups[2].Value, out var point)) continue;
-            var dx = TryParseCoordinate(label.Groups[3].Value, out var parsedDx) ? parsedDx : 0;
-            var dy = TryParseCoordinate(label.Groups[4].Value, out var parsedDy) ? parsedDy : 0;
-            labels.Add((label.Groups[1].Value, new PointCoordinate(point.X + dx, point.Y + dy)));
+            if (label.Success && points.TryGetValue(label.Groups[2].Value, out var point))
+            {
+                var dx = TryParseCoordinate(label.Groups[3].Value, out var parsedDx) ? parsedDx : 0;
+                var dy = TryParseCoordinate(label.Groups[4].Value, out var parsedDy) ? parsedDy : 0;
+                labels.Add((label.Groups[1].Value, new PointCoordinate(point.X + dx, point.Y + dy)));
+                continue;
+            }
+
+            var coordinateLabel = TextAtCoordinatePattern.Match(command);
+            if (!coordinateLabel.Success ||
+                !TryParseCoordinate(coordinateLabel.Groups[2].Value, out var labelX) ||
+                !TryParseCoordinate(coordinateLabel.Groups[3].Value, out var labelY)) continue;
+            labels.Add((coordinateLabel.Groups[1].Value, new PointCoordinate(labelX, labelY)));
         }
 
         if (segments.Count == 0) return false;
@@ -164,7 +182,7 @@ internal static class GeoGebraRenderer
         if (Math.Abs(maxX - minX) < 0.001 || Math.Abs(maxY - minY) < 0.001) return false;
 
         const double width = 720;
-        const double margin = 42;
+        const double margin = 58;
         var scale = (width - margin * 2) / Math.Max(maxX - minX, 0.001);
         var height = Math.Clamp((maxY - minY) * scale + margin * 2, 180, 520);
 
@@ -224,7 +242,60 @@ internal static class GeoGebraRenderer
                 !TryParseCoordinate(match.Groups[3].Value, out var y)) continue;
             points[match.Groups[1].Value] = new PointCoordinate(x, y);
         }
+        var progress = true;
+        while (progress)
+        {
+            progress = false;
+            foreach (var command in commands)
+            {
+                var midpoint = MidpointPattern.Match(command);
+                if (midpoint.Success &&
+                    !points.ContainsKey(midpoint.Groups[1].Value) &&
+                    points.TryGetValue(midpoint.Groups[2].Value, out var first) &&
+                    points.TryGetValue(midpoint.Groups[3].Value, out var second))
+                {
+                    points[midpoint.Groups[1].Value] = new PointCoordinate(
+                        (first.X + second.X) / 2,
+                        (first.Y + second.Y) / 2);
+                    progress = true;
+                    continue;
+                }
+
+                var intersection = IntersectSegmentsPattern.Match(command);
+                if (!intersection.Success ||
+                    points.ContainsKey(intersection.Groups[1].Value) ||
+                    !points.TryGetValue(intersection.Groups[2].Value, out var a) ||
+                    !points.TryGetValue(intersection.Groups[3].Value, out var b) ||
+                    !points.TryGetValue(intersection.Groups[4].Value, out var c) ||
+                    !points.TryGetValue(intersection.Groups[5].Value, out var d) ||
+                    !TryIntersect(a, b, c, d, out var point)) continue;
+                points[intersection.Groups[1].Value] = point;
+                progress = true;
+            }
+        }
         return points;
+    }
+
+    private static bool TryIntersect(
+        PointCoordinate a,
+        PointCoordinate b,
+        PointCoordinate c,
+        PointCoordinate d,
+        out PointCoordinate point)
+    {
+        var denominator = (a.X - b.X) * (c.Y - d.Y) - (a.Y - b.Y) * (c.X - d.X);
+        if (Math.Abs(denominator) < 0.000001)
+        {
+            point = new PointCoordinate(0, 0);
+            return false;
+        }
+
+        var first = a.X * b.Y - a.Y * b.X;
+        var second = c.X * d.Y - c.Y * d.X;
+        point = new PointCoordinate(
+            (first * (c.X - d.X) - (a.X - b.X) * second) / denominator,
+            (first * (c.Y - d.Y) - (a.Y - b.Y) * second) / denominator);
+        return true;
     }
 
     private static double DistanceSquared(PointCoordinate point, double x, double y)

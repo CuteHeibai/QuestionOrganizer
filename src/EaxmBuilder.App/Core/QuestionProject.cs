@@ -75,11 +75,74 @@ public sealed class OutputSelection
     public bool Pdf { get; set; } = true;
     public bool Latex { get; set; } = true;
     public bool Json { get; set; } = true;
+    public bool Svg { get; set; } = true;
+    public string OutputDirectory { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
     public string AppendToWordPath { get; set; } = string.Empty;
 
     [JsonIgnore]
     public bool AppendToWord => !string.IsNullOrWhiteSpace(AppendToWordPath);
 
     [JsonIgnore]
-    public bool HasAnyOutput => Word || Pdf || Latex || Json || AppendToWord;
+    public bool HasAnyOutput => Word || Pdf || Latex || Json || Svg || AppendToWord;
+}
+
+public static class ProjectOutputPaths
+{
+    private static readonly string[] FinalExtensions = [".docx", ".pdf", ".tex", ".json"];
+
+    public static string GetFinalDirectory(QuestionProject project) =>
+        string.IsNullOrWhiteSpace(project.OutputSelection.OutputDirectory)
+            ? Path.Combine(project.DirectoryPath, "output")
+            : project.OutputSelection.OutputDirectory.Trim();
+
+    public static string GetBaseFileName(QuestionProject project)
+    {
+        var value = string.IsNullOrWhiteSpace(project.OutputSelection.FileName)
+            ? project.Name
+            : project.OutputSelection.FileName;
+        var safe = SanitizeFileName(Path.GetFileNameWithoutExtension(value));
+        return string.IsNullOrWhiteSpace(safe) ? "Question" : safe;
+    }
+
+    public static string GetFilePath(QuestionProject project, string extension) =>
+        Path.Combine(EnsureFinalDirectory(project), GetBaseFileName(project) + extension);
+
+    public static string GetFigurePath(QuestionProject project, string figureId) =>
+        Path.Combine(EnsureFinalDirectory(project), $"{GetBaseFileName(project)}-{SanitizeFileName(figureId)}.svg");
+
+    public static string EnsureFinalDirectory(QuestionProject project)
+    {
+        var directory = GetFinalDirectory(project);
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    public static void ClearFinalOutputs(QuestionProject project)
+    {
+        var directory = EnsureFinalDirectory(project);
+        var baseName = GetBaseFileName(project);
+        foreach (var extension in FinalExtensions)
+            TryDelete(Path.Combine(directory, baseName + extension));
+        foreach (var path in Directory.EnumerateFiles(directory, baseName + "-*.svg"))
+            TryDelete(path);
+    }
+
+    public static string SanitizeFileName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return new string(value.Where(character => !invalid.Contains(character)).ToArray()).Trim();
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch
+        {
+            // A locked final file will be reported by the exporter that tries to overwrite it.
+        }
+    }
 }

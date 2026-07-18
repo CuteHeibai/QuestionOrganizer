@@ -428,6 +428,10 @@
                                             Margin="0,0,8,0" Click="OpenProjectFolder_Click">
                                         <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
                                     </Button>
+                                    <Button Style="{StaticResource IconButton}" ToolTip="打开最终输出文件夹"
+                                            Margin="0,0,8,0" Click="OpenFinalOutputFolder_Click">
+                                        <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
+                                    </Button>
                                     <Button x:Name="AiInstructionsButton" Style="{StaticResource SecondaryButton}" Content="AI 要求"
                                             Margin="0,0,10,0" Click="EditAiInstructions_Click" />
                                     <Button x:Name="RunProjectButton" Style="{StaticResource PrimaryButton}" Content="开始处理"
@@ -493,11 +497,18 @@
                                         </Border>
                                     </Grid>
                                 </Border>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="处理任务" FontSize="18" FontWeight="SemiBold" />
-                                    <TextBlock Text="失败的步骤可以单独重新执行" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,18" />
-                                    <Border Background="#FAFAFA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                            CornerRadius="8" Padding="14" Margin="0,0,0,18">
+                                <Grid Grid.Column="2">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel Grid.Row="0">
+                                        <TextBlock Text="处理任务" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock Text="失败的步骤可以单独重新执行" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,18" />
+                                    </StackPanel>
+                                    <Border x:Name="OutputConfigCard" Background="#FAFAFA" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                            CornerRadius="8" Padding="14" Margin="0,0,0,18" Grid.Row="1">
                                         <StackPanel>
                                             <TextBlock Text="输出内容" FontSize="14" FontWeight="SemiBold" />
                                             <TextBlock Text="只生成你需要的文件，也可以追加到已有 Word"
@@ -511,7 +522,32 @@
                                                           Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
                                                 <CheckBox x:Name="OutputJsonBox" Style="{StaticResource ModernCheckBox}" Content="JSON"
                                                           Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
+                                                <CheckBox x:Name="OutputSvgBox" Style="{StaticResource ModernCheckBox}" Content="SVG 图形"
+                                                          Checked="OutputOption_Changed" Unchecked="OutputOption_Changed" />
                                             </WrapPanel>
+                                            <TextBlock Text="文件名" Style="{StaticResource LabelText}" Margin="0,2,0,7" />
+                                            <TextBox x:Name="OutputFileNameBox" Style="{StaticResource Field}" Height="34"
+                                                     LostKeyboardFocus="OutputTarget_LostKeyboardFocus"
+                                                     KeyDown="OutputTarget_KeyDown" />
+                                            <TextBlock Text="最终导出会使用这个文件名，避免覆盖其他结果"
+                                                       FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,10" />
+                                            <TextBlock Text="最终输出文件夹" Style="{StaticResource LabelText}" Margin="0,0,0,7" />
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox x:Name="ProjectOutputDirectoryBox" Style="{StaticResource Field}" Height="34"
+                                                         LostKeyboardFocus="OutputTarget_LostKeyboardFocus"
+                                                         KeyDown="OutputTarget_KeyDown" />
+                                                <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="38" Height="34"
+                                                        Margin="8,0,0,0" Background="{StaticResource ButtonBrush}"
+                                                        ToolTip="选择最终输出文件夹" Click="ChooseProjectOutputDirectory_Click">
+                                                    <controls:FluentIcon Kind="FolderOpen" Width="15" Height="15" />
+                                                </Button>
+                                            </Grid>
+                                            <TextBlock Text="这个文件夹只保存最终结果；OCR、复核记录等过渡文件仍留在项目内部"
+                                                       FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                             <TextBlock Text="图形处理" Style="{StaticResource LabelText}" Margin="0,4,0,7" />
                                             <ComboBox x:Name="FigureModeBox" Style="{StaticResource ModernComboBox}" Height="34"
                                                       SelectionChanged="FigureModeBox_SelectionChanged">
@@ -539,48 +575,64 @@
                                             </Grid>
                                         </StackPanel>
                                     </Border>
-                                    <ItemsControl x:Name="TaskStepsList">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border BorderBrush="#ECECEC" BorderThickness="0,0,0,1" Padding="2,14">
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <controls:FluentIcon Kind="{Binding Icon}" Width="16" Height="16"
-                                                                             Foreground="{Binding StatusBrush}" VerticalAlignment="Center">
-                                                            <controls:FluentIcon.Style>
-                                                                <Style TargetType="controls:FluentIcon">
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
-                                                                            <DataTrigger.EnterActions>
-                                                                                <BeginStoryboard>
-                                                                                    <Storyboard>
-                                                                                        <DoubleAnimation Storyboard.TargetProperty="RotationAngle"
-                                                                                                         From="0" To="360" Duration="0:0:0.9"
-                                                                                                         RepeatBehavior="Forever" />
-                                                                                    </Storyboard>
-                                                                                </BeginStoryboard>
-                                                                            </DataTrigger.EnterActions>
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </controls:FluentIcon.Style>
-                                                        </controls:FluentIcon>
-                                                        <StackPanel Grid.Column="1">
-                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
-                                                            <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource MutedBrush}"
-                                                                       Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
-                                                        </StackPanel>
-                                                        <Button Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="重试"
-                                                                Padding="12,7" Tag="{Binding Step}" Visibility="{Binding RetryVisibility}"
-                                                                Click="RetryStep_Click" />
-                                                    </Grid>
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
+                                    <Border x:Name="TaskProgressCard" Grid.Row="2" Background="#FAFAFA" BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="8" MinHeight="150" ClipToBounds="True">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                                      Padding="12,0">
+                                            <ItemsControl x:Name="TaskStepsList">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="#ECECEC" BorderThickness="0,0,0,1" Padding="2,14" Opacity="0">
+                                                            <Border.Triggers>
+                                                                <EventTrigger RoutedEvent="Border.Loaded">
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard>
+                                                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                                                             To="1" Duration="0:0:0.18" />
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </EventTrigger>
+                                                            </Border.Triggers>
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <controls:FluentIcon Kind="{Binding Icon}" Width="16" Height="16"
+                                                                                     Foreground="{Binding StatusBrush}" VerticalAlignment="Center">
+                                                                    <controls:FluentIcon.Style>
+                                                                        <Style TargetType="controls:FluentIcon">
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                                                                    <DataTrigger.EnterActions>
+                                                                                        <BeginStoryboard>
+                                                                                            <Storyboard>
+                                                                                                <DoubleAnimation Storyboard.TargetProperty="RotationAngle"
+                                                                                                                 From="0" To="360" Duration="0:0:0.9"
+                                                                                                                 RepeatBehavior="Forever" />
+                                                                                            </Storyboard>
+                                                                                        </BeginStoryboard>
+                                                                                    </DataTrigger.EnterActions>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </controls:FluentIcon.Style>
+                                                                </controls:FluentIcon>
+                                                                <StackPanel Grid.Column="1">
+                                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
+                                                                    <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                                <Button Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="重试"
+                                                                        Padding="12,7" Tag="{Binding Step}" Visibility="{Binding RetryVisibility}"
+                                                                        Click="RetryStep_Click" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
                             </Grid>
                         </Grid>
 
@@ -621,6 +673,8 @@
                                             <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
                                         </Button>
                                     </Grid>
+                                    <TextBlock Text="新项目的最终结果默认保存到：默认输出目录\最终输出\项目名"
+                                               FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" />
                                     <TextBlock Text="Word 模板" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>

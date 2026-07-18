@@ -520,6 +520,7 @@ public partial class MainWindow : Window
 
     private void ShowProject(QuestionProject project)
     {
+        ApplyDefaultFinalOutput(project);
         _currentProject = project;
         ProjectTitle.Text = project.Name;
         ProjectPath.Text = project.DirectoryPath;
@@ -548,12 +549,14 @@ public partial class MainWindow : Window
 
     private void RefreshProjectView(QuestionProject project)
     {
-        TaskStepsList.ItemsSource = Enum.GetValues<TaskStep>().Select(step => new TaskStepView(step, project.Steps[step])).ToList();
+        TaskStepsList.ItemsSource = GetVisibleTaskSteps(project)
+            .Select(step => new TaskStepView(step, project.Steps[step]))
+            .ToList();
         RefreshPreviewFiles(project);
         if (project.IsComplete)
         {
-            RunProjectButton.Content = "已完成";
-            RunProjectButton.IsEnabled = false;
+            RunProjectButton.Content = "再次生成";
+            RunProjectButton.IsEnabled = true;
         }
         else if (_runningProjects.ContainsKey(project.Id))
         {
@@ -565,6 +568,11 @@ public partial class MainWindow : Window
             RunProjectButton.Content = project.CompletedStepCount == 0 ? "开始处理" : "继续处理";
             RunProjectButton.IsEnabled = true;
         }
+        var isRunning = _runningProjects.ContainsKey(project.Id);
+        OutputConfigCard.Visibility = isRunning ? Visibility.Collapsed : Visibility.Visible;
+        TaskProgressCard.Visibility = isRunning || HasFailedStep(project) || HasStartedStep(project) && !project.IsComplete
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         UpdateAiActivitySummary();
     }
 
@@ -573,20 +581,61 @@ public partial class MainWindow : Window
         var files = new List<PreviewFile>();
         if (File.Exists(project.SourcePath))
             files.Add(new PreviewFile("源文件", project.SourcePath, PreviewKind.Source));
-        Add("PDF", "question.pdf", PreviewKind.Browser);
-        Add("Word", "question.docx", PreviewKind.DocumentInfo);
-        Add("HTML", "question.html", PreviewKind.Browser);
-        Add("SVG", "figure1.svg", PreviewKind.Browser);
-        Add("JSON", "document.json", PreviewKind.Text);
-        Add("LaTeX", "question.tex", PreviewKind.Text);
+        if (project.OutputSelection.Pdf)
+            Add("PDF", ProjectOutputPaths.GetFilePath(project, ".pdf"), PreviewKind.Browser);
+        if (project.OutputSelection.Word)
+            Add("Word", ProjectOutputPaths.GetFilePath(project, ".docx"), PreviewKind.DocumentInfo);
+        if (project.OutputSelection.Svg)
+            AddFirstSvg();
+        if (project.OutputSelection.Json)
+            Add("JSON", ProjectOutputPaths.GetFilePath(project, ".json"), PreviewKind.Text);
+        if (project.OutputSelection.Latex)
+            Add("LaTeX", ProjectOutputPaths.GetFilePath(project, ".tex"), PreviewKind.Text);
         return files;
 
-        void Add(string label, string fileName, PreviewKind kind)
+        void Add(string label, string path, PreviewKind kind)
         {
-            var path = Path.Combine(project.DirectoryPath, fileName);
             if (File.Exists(path)) files.Add(new PreviewFile(label, path, kind));
         }
+
+        void AddFirstSvg()
+        {
+            var directory = ProjectOutputPaths.GetFinalDirectory(project);
+            if (!Directory.Exists(directory)) return;
+            var svgPath = Directory
+                .EnumerateFiles(directory, ProjectOutputPaths.GetBaseFileName(project) + "-*.svg")
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+            if (svgPath is not null) files.Add(new PreviewFile("SVG", svgPath, PreviewKind.Browser));
+        }
     }
+
+    private void ApplyDefaultFinalOutput(QuestionProject project)
+    {
+        var changed = false;
+        if (string.IsNullOrWhiteSpace(project.OutputSelection.FileName))
+        {
+            project.OutputSelection.FileName = ProjectOutputPaths.GetBaseFileName(project);
+            changed = true;
+        }
+        var legacyLocalOutput = Path.Combine(project.DirectoryPath, "output");
+        if (string.IsNullOrWhiteSpace(project.OutputSelection.OutputDirectory) ||
+            string.Equals(project.OutputSelection.OutputDirectory.Trim(), legacyLocalOutput, StringComparison.OrdinalIgnoreCase))
+        {
+            project.OutputSelection.OutputDirectory = Path.Combine(
+                _settings.OutputDirectory,
+                "最终输出",
+                Path.GetFileName(project.DirectoryPath));
+            changed = true;
+        }
+        if (changed) _ = _projectRepository.SaveAsync(project);
+    }
+
+    private static bool HasStartedStep(QuestionProject project) =>
+        project.Steps.Values.Any(step => step.Attempts > 0 || step.State is StepState.Running or StepState.Completed);
+
+    private static bool HasFailedStep(QuestionProject project) =>
+        project.Steps.Values.Any(step => step.State == StepState.Failed);
 
     private void PreviewFile_Click(object sender, RoutedEventArgs e)
     {
@@ -596,7 +645,8 @@ public partial class MainWindow : Window
     private void SelectPreviewFile(PreviewFile? file)
     {
         _activePreviewFile = file;
-        OpenPreviewButton.IsEnabled = file is not null;
+        var isRunningGeneratedFile = file is not null && file.Kind != PreviewKind.Source && IsProjectRunning(_currentProject);
+        OpenPreviewButton.IsEnabled = file is not null && !isRunningGeneratedFile;
         SourcePreview.Visibility = Visibility.Collapsed;
         FilePreviewBrowser.Visibility = Visibility.Collapsed;
         TextFilePreview.Visibility = Visibility.Collapsed;
@@ -609,7 +659,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        PreviewHintText.Text = file.Path;
+        PreviewHintText.Text = isRunningGeneratedFile
+            ? $"{file.Path}（项目仍在处理/复核，完成后再打开可避免读取未最终写完的文件）"
+            : file.Path;
         try
         {
             if (file.Kind == PreviewKind.Source &&
@@ -671,6 +723,11 @@ public partial class MainWindow : Window
             OutputPdfBox.IsChecked = project.OutputSelection.Pdf;
             OutputLatexBox.IsChecked = project.OutputSelection.Latex;
             OutputJsonBox.IsChecked = project.OutputSelection.Json;
+            OutputSvgBox.IsChecked = project.OutputSelection.Svg;
+            OutputFileNameBox.Text = string.IsNullOrWhiteSpace(project.OutputSelection.FileName)
+                ? ProjectOutputPaths.GetBaseFileName(project)
+                : project.OutputSelection.FileName;
+            ProjectOutputDirectoryBox.Text = ProjectOutputPaths.GetFinalDirectory(project);
             SelectFigureMode(project.FigureMode);
             UpdateFigureModeHint(project.FigureMode);
             AppendWordBox.IsChecked = project.OutputSelection.AppendToWord;
@@ -709,6 +766,34 @@ public partial class MainWindow : Window
         await SaveProjectOutputOptionsAsync();
     }
 
+    private async void OutputTarget_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_isPopulatingProjectOptions || _currentProject is null) return;
+        await SaveProjectOutputOptionsAsync();
+    }
+
+    private async void OutputTarget_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || _currentProject is null) return;
+        e.Handled = true;
+        await SaveProjectOutputOptionsAsync();
+    }
+
+    private async void ChooseProjectOutputDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentProject is null) return;
+        var dialog = new OpenFolderDialog
+        {
+            Title = "选择最终输出文件夹",
+            InitialDirectory = Directory.Exists(ProjectOutputDirectoryBox.Text)
+                ? ProjectOutputDirectoryBox.Text
+                : _currentProject.DirectoryPath
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        ProjectOutputDirectoryBox.Text = dialog.FolderName;
+        await SaveProjectOutputOptionsAsync();
+    }
+
     private async void ChooseAppendWordTarget_Click(object sender, RoutedEventArgs e)
     {
         if (_currentProject is null) return;
@@ -727,28 +812,58 @@ public partial class MainWindow : Window
         var oldPdf = _currentProject.OutputSelection.Pdf;
         var oldLatex = _currentProject.OutputSelection.Latex;
         var oldJson = _currentProject.OutputSelection.Json;
+        var oldSvg = _currentProject.OutputSelection.Svg;
+        var oldFileName = _currentProject.OutputSelection.FileName;
+        var oldOutputDirectory = _currentProject.OutputSelection.OutputDirectory;
         var oldAppendPath = _currentProject.OutputSelection.AppendToWordPath;
         var oldFigureMode = _currentProject.FigureMode;
         _currentProject.OutputSelection.Word = OutputWordBox.IsChecked == true;
         _currentProject.OutputSelection.Pdf = OutputPdfBox.IsChecked == true;
         _currentProject.OutputSelection.Latex = OutputLatexBox.IsChecked == true;
         _currentProject.OutputSelection.Json = OutputJsonBox.IsChecked == true;
+        _currentProject.OutputSelection.Svg = OutputSvgBox.IsChecked == true;
+        _currentProject.OutputSelection.FileName = OutputFileNameBox.Text.Trim();
+        _currentProject.OutputSelection.OutputDirectory = ProjectOutputDirectoryBox.Text.Trim();
         _currentProject.OutputSelection.AppendToWordPath = appendPath;
         _currentProject.FigureMode = ReadSelectedFigureMode();
         AppendWordTargetBox.IsEnabled = AppendWordBox.IsChecked == true;
+        var outputTargetChanged =
+            !string.Equals(oldFileName, _currentProject.OutputSelection.FileName, StringComparison.Ordinal) ||
+            !string.Equals(oldOutputDirectory, _currentProject.OutputSelection.OutputDirectory, StringComparison.OrdinalIgnoreCase);
         NormalizeFigureSteps(_currentProject, oldFigureMode != _currentProject.FigureMode);
         NormalizeExportStep(
             _currentProject,
             TaskStep.WordExport,
+            outputTargetChanged ||
             oldWord != _currentProject.OutputSelection.Word ||
             !string.Equals(oldAppendPath, appendPath, StringComparison.OrdinalIgnoreCase),
             _currentProject.OutputSelection.Word || _currentProject.OutputSelection.AppendToWord);
-        NormalizeExportStep(_currentProject, TaskStep.PdfExport, oldPdf != _currentProject.OutputSelection.Pdf, _currentProject.OutputSelection.Pdf);
-        NormalizeExportStep(_currentProject, TaskStep.LatexExport, oldLatex != _currentProject.OutputSelection.Latex, _currentProject.OutputSelection.Latex);
-        NormalizeExportStep(_currentProject, TaskStep.JsonExport, oldJson != _currentProject.OutputSelection.Json, _currentProject.OutputSelection.Json);
+        NormalizeExportStep(_currentProject, TaskStep.PdfExport, outputTargetChanged || oldPdf != _currentProject.OutputSelection.Pdf, _currentProject.OutputSelection.Pdf);
+        NormalizeExportStep(_currentProject, TaskStep.LatexExport, outputTargetChanged || oldLatex != _currentProject.OutputSelection.Latex, _currentProject.OutputSelection.Latex);
+        NormalizeExportStep(_currentProject, TaskStep.JsonExport, outputTargetChanged || oldJson != _currentProject.OutputSelection.Json, _currentProject.OutputSelection.Json);
+        if (outputTargetChanged || oldSvg != _currentProject.OutputSelection.Svg) ResetStep(_currentProject, TaskStep.AiReview);
         await _projectRepository.SaveAsync(_currentProject);
         RefreshProjectView(_currentProject);
     }
+
+    private static IReadOnlyList<TaskStep> GetVisibleTaskSteps(QuestionProject project)
+    {
+        var steps = new List<TaskStep>
+        {
+            TaskStep.Ocr,
+            TaskStep.FormulaRecognition,
+            TaskStep.FigureRedraw
+        };
+        if (project.OutputSelection.Word || project.OutputSelection.AppendToWord) steps.Add(TaskStep.WordExport);
+        if (project.OutputSelection.Pdf) steps.Add(TaskStep.PdfExport);
+        if (project.OutputSelection.Latex) steps.Add(TaskStep.LatexExport);
+        if (project.OutputSelection.Json) steps.Add(TaskStep.JsonExport);
+        if (project.OutputSelection.HasAnyOutput) steps.Add(TaskStep.AiReview);
+        return steps;
+    }
+
+    private bool IsProjectRunning(QuestionProject? project) =>
+        project is not null && _runningProjects.ContainsKey(project.Id);
 
     private void SelectFigureMode(FigureProcessingMode mode)
     {
@@ -794,6 +909,15 @@ public partial class MainWindow : Window
         if (project.OutputSelection.HasAnyOutput) ResetStep(project, TaskStep.AiReview);
     }
 
+    private static void ResetFinalGenerationSteps(QuestionProject project)
+    {
+        if (project.OutputSelection.Word || project.OutputSelection.AppendToWord) ResetStep(project, TaskStep.WordExport);
+        if (project.OutputSelection.Pdf) ResetStep(project, TaskStep.PdfExport);
+        if (project.OutputSelection.Latex) ResetStep(project, TaskStep.LatexExport);
+        if (project.OutputSelection.Json) ResetStep(project, TaskStep.JsonExport);
+        if (project.OutputSelection.HasAnyOutput) ResetStep(project, TaskStep.AiReview);
+    }
+
     private static void ResetStep(QuestionProject project, TaskStep step)
     {
         var record = project.Steps[step];
@@ -831,6 +955,7 @@ public partial class MainWindow : Window
         if (_currentProject is null) return;
         await SaveProjectOutputOptionsAsync();
         if (!ValidateOutputSelection(_currentProject)) return;
+        if (_currentProject.IsComplete) ResetFinalGenerationSteps(_currentProject);
         _ = RunProjectInBackgroundAsync(_currentProject);
     }
 
@@ -932,6 +1057,24 @@ public partial class MainWindow : Window
             ShowNotice("请选择输出内容", "至少选择一种输出，或选择追加到现有 Word 文档。");
             return false;
         }
+        var safeName = ProjectOutputPaths.SanitizeFileName(
+            Path.GetFileNameWithoutExtension(string.IsNullOrWhiteSpace(project.OutputSelection.FileName)
+                ? project.Name
+                : project.OutputSelection.FileName));
+        if (string.IsNullOrWhiteSpace(safeName))
+        {
+            ShowNotice("请填写文件名", "文件名会用于生成最终文件，例如 题目6.docx、题目6.pdf。");
+            return false;
+        }
+        try
+        {
+            ProjectOutputPaths.EnsureFinalDirectory(project);
+        }
+        catch (Exception exception)
+        {
+            ShowNotice("输出文件夹不可用", exception.Message);
+            return false;
+        }
         if (project.OutputSelection.AppendToWord && !File.Exists(project.OutputSelection.AppendToWordPath))
         {
             ShowNotice("Word 文档不存在", "请选择一个存在的 .docx 文档用于追加。");
@@ -944,6 +1087,20 @@ public partial class MainWindow : Window
     {
         if (_currentProject is null || !Directory.Exists(_currentProject.DirectoryPath)) return;
         Process.Start(new ProcessStartInfo("explorer.exe", _currentProject.DirectoryPath) { UseShellExecute = true });
+    }
+
+    private void OpenFinalOutputFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentProject is null) return;
+        try
+        {
+            var directory = ProjectOutputPaths.EnsureFinalDirectory(_currentProject);
+            Process.Start(new ProcessStartInfo("explorer.exe", directory) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            ShowNotice("无法打开输出文件夹", exception.Message);
+        }
     }
 
     private void EditAiInstructions_Click(object sender, RoutedEventArgs e)

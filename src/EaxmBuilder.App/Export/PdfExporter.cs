@@ -19,7 +19,7 @@ public sealed class PdfExporter : IQuestionExporter
         if (edgePath is null)
             throw new InvalidOperationException("未找到 Microsoft Edge，无法生成 PDF。");
 
-        var pdfPath = Path.Combine(project.DirectoryPath, "question.pdf");
+        var pdfPath = ProjectOutputPaths.GetFilePath(project, ".pdf");
         var startInfo = new ProcessStartInfo
         {
             FileName = edgePath,

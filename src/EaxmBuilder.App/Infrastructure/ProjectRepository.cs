@@ -27,7 +27,12 @@ public sealed class ProjectRepository
         {
             Name = baseName,
             DirectoryPath = directory,
-            SourceFileName = sourceName
+            SourceFileName = sourceName,
+            OutputSelection =
+            {
+                FileName = baseName,
+                OutputDirectory = Path.Combine(outputRoot, "最终输出", Path.GetFileName(directory))
+            }
         };
         await SaveAsync(project);
         return project;

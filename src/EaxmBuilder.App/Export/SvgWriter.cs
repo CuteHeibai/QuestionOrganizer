@@ -21,6 +21,20 @@ public static class SvgWriter
         }
     }
 
+    public static async Task WriteFinalOutputsAsync(
+        QuestionProject project,
+        IReadOnlyList<FigureDocument> figures,
+        CancellationToken cancellationToken)
+    {
+        if (!project.OutputSelection.Svg) return;
+        foreach (var figure in figures)
+        {
+            var svg = Sanitize(figure.Svg);
+            figure.Svg = svg;
+            await File.WriteAllTextAsync(ProjectOutputPaths.GetFigurePath(project, figure.Id), svg, cancellationToken);
+        }
+    }
+
     private static string Sanitize(string svg)
     {
         var document = XDocument.Parse(svg, LoadOptions.PreserveWhitespace);

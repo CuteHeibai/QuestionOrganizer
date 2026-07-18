@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Xml.Linq;
@@ -20,6 +21,9 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
     private static readonly XNamespace Wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
     private static readonly XNamespace A = "http://schemas.openxmlformats.org/drawingml/2006/main";
     private static readonly XNamespace Pic = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+    private static readonly Regex InlineLatexPattern = new(
+        @"\$[^$]+\$|\\\([^)]+\\\)|[A-Za-z0-9_{}^()+\-*/=,.\s]{0,24}\\(?:sqrt|frac|dfrac|tfrac|angle|triangle|perp|parallel|overline|mathrm|mathbf|mathit|sin|cos|tan|cdot|times|leq?|geq?|neq)[^，。；;：:\r\n]*",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public TaskStep Step => TaskStep.WordExport;
 
@@ -31,7 +35,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         cancellationToken.ThrowIfCancellationRequested();
         var exportOptions = options ?? new WordExportOptions();
         var templatePath = ResolveTemplatePath();
-        var outputPath = Path.Combine(project.DirectoryPath, "question.docx");
+        var outputPath = ProjectOutputPaths.GetFilePath(project, ".docx");
         var renderedFigures = await RenderFiguresAsync(document, cancellationToken);
         try
         {
@@ -73,11 +77,11 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         }
         catch (IOException exception)
         {
-            throw new IOException("question.docx 正在被 Word 或其他程序打开。请关闭该文件后，重新执行 Word 步骤。", exception);
+            throw new IOException($"{Path.GetFileName(path)} 正在被 Word 或其他程序打开。请关闭该文件后，重新执行 Word 步骤。", exception);
         }
         catch (UnauthorizedAccessException exception)
         {
-            throw new IOException("question.docx 当前不可写。请检查文件权限或关闭正在使用它的程序。", exception);
+            throw new IOException($"{Path.GetFileName(path)} 当前不可写。请检查文件权限或关闭正在使用它的程序。", exception);
         }
     }
 
@@ -542,15 +546,36 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
         string text,
         IReadOnlyDictionary<string, string> latexSymbolMap)
     {
-        foreach (var segment in MathTextFormatter.ToMathSegments(text, latexSymbolMap))
+        foreach (var inlineSegment in SplitInlineLatex(text))
         {
-            yield return segment.Kind switch
+            if (inlineSegment.IsMath)
             {
-                MathTextFormatter.SegmentKind.Fraction => CreateMathObject(CreateMathFraction(segment, latexSymbolMap)),
-                MathTextFormatter.SegmentKind.Radical => CreateMathObject(CreateMathRadical(segment, latexSymbolMap)),
-                _ => CreateTextRun(segment.Text)
-            };
+                yield return CreateMathRun(inlineSegment.Text, latexSymbolMap);
+                continue;
+            }
+
+            foreach (var segment in MathTextFormatter.ToMathSegments(inlineSegment.Text, latexSymbolMap))
+            {
+                yield return segment.Kind switch
+                {
+                    MathTextFormatter.SegmentKind.Fraction => CreateMathObject(CreateMathFraction(segment, latexSymbolMap)),
+                    MathTextFormatter.SegmentKind.Radical => CreateMathObject(CreateMathRadical(segment, latexSymbolMap)),
+                    _ => CreateTextRun(segment.Text)
+                };
+            }
         }
+    }
+
+    private static IEnumerable<(bool IsMath, string Text)> SplitInlineLatex(string text)
+    {
+        var cursor = 0;
+        foreach (Match match in InlineLatexPattern.Matches(text))
+        {
+            if (match.Index > cursor) yield return (false, text[cursor..match.Index]);
+            yield return (true, match.Value.Trim());
+            cursor = match.Index + match.Length;
+        }
+        if (cursor < text.Length) yield return (false, text[cursor..]);
     }
 
     private static XElement CreateMathRun(string latex, IReadOnlyDictionary<string, string> latexSymbolMap) =>

@@ -13,7 +13,11 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() }
+        Converters =
+        {
+            new QuestionBlockTypeJsonConverter(),
+            new JsonStringEnumConverter()
+        }
     };
 
     private readonly HttpClient _client;
@@ -64,7 +68,9 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             整理目标是把这道数学题用 LaTeX 公式整理到 Word 文档中：
             正文最终排版为宋体、五号、不加粗、二倍行距、段落前后无空格。
             你只负责把文字、公式、图形占位整理成结构化内容；不要把这些排版要求写入题目正文。
-            普通文字使用 Paragraph；每个独立或行内数学表达式使用 Formula，并在 latex 中给出规范 LaTeX；
+            普通文字使用 Paragraph；每个独立或行内数学表达式都必须拆成 Formula 块，并在 latex 中给出规范 LaTeX；
+            Paragraph 的 text 中不要残留 $...$、\(...\)、\sqrt、\frac、\angle、\triangle、_、^ 等 LaTeX/公式代码；
+            如果一句话中穿插公式，请按 Paragraph + Formula + Paragraph + Formula 的顺序拆开，保持原文顺序；
             原图中存在几何图、坐标图、函数图、示意图、绳结图或依赖图像的选项时，在对应位置添加 Figure 块，
             并分配 figureId（figure1 起）。题干目标图和每个图像选项必须拆成独立 Figure：
             先放题干文字，再放目标图；每个选项按 Paragraph("A.") + Figure 的形式排列。
@@ -79,7 +85,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             {{ocr.RawText}}
             """ + FormatAdditionalInstructions(additionalInstructions);
         var document = await RequestJsonAsync<QuestionDocument>(sourcePath, prompt, cancellationToken);
-        NormalizeLatexSymbolMap(document);
+        QuestionDocumentNormalizer.NormalizeLatexSymbolMap(document);
         return document;
     }
 
@@ -178,6 +184,10 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             {{figureMap}}
 
             保留点名、线型、角标、箭头、坐标轴及相对位置。不要把原图嵌入 SVG。
+            只绘制 {{figureId}} 对应的几何图/函数图本体和图内点名、图号；不要绘制题干正文、问号、LaTeX 公式、条件说明或小问文字。
+            图内点名必须避开线段和交点，优先放在线段外侧；禁止给文字加白底、白色描边或白色遮罩来盖住线段。
+            如果标注会压线，请移动标注位置，不要用背景块解决。
+            不要把数学符号替换成普通英文描述，也不要把题干里的公式集中绘制到 SVG 末尾。
             如果是绳结或交叉线图，必须保留拓扑关系：线条的每一次交叉都要通过断开、留白或白色遮罩表达上下穿过，
             不能把交叉画成普通相交线，不能省略局部弧线。
             如果是图像选项，只绘制该编号对应的一幅图，不要混入其他选项或题干目标图。
@@ -284,17 +294,6 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
 
     private static string TrimForPrompt(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength] + "\n...（已截断）";
-
-    private static void NormalizeLatexSymbolMap(QuestionDocument document)
-    {
-        if (document.LatexSymbolMap.Count == 0) return;
-        document.LatexSymbolMap = document.LatexSymbolMap
-            .Where(item => !string.IsNullOrWhiteSpace(item.Key) && !string.IsNullOrWhiteSpace(item.Value))
-            .ToDictionary(
-                item => item.Key.Trim().StartsWith('\\') ? item.Key.Trim() : "\\" + item.Key.Trim(),
-                item => item.Value.Trim(),
-                StringComparer.Ordinal);
-    }
 
     private async Task<T> RequestJsonAsync<T>(
         string sourcePath,
