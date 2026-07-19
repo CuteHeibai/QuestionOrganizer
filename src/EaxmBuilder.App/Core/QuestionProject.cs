@@ -50,6 +50,7 @@ public sealed class QuestionProject
     public string AiInstructions { get; set; } = string.Empty;
     public OutputSelection OutputSelection { get; set; } = new();
     public FigureProcessingMode FigureMode { get; set; } = FigureProcessingMode.AiRedraw;
+    public GenerationSummary LastGeneration { get; set; } = new();
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
     public Dictionary<TaskStep, StepRecord> Steps { get; set; } = Enum
@@ -69,6 +70,16 @@ public sealed class QuestionProject
     public string StatusText => IsComplete ? "已完成" : $"{CompletedStepCount}/{Steps.Count} 步";
 }
 
+public sealed class GenerationSummary
+{
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public bool? Succeeded { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string ReviewSummary { get; set; } = string.Empty;
+    public List<string> Files { get; set; } = [];
+}
+
 public sealed class OutputSelection
 {
     public bool Word { get; set; } = true;
@@ -85,6 +96,28 @@ public sealed class OutputSelection
 
     [JsonIgnore]
     public bool HasAnyOutput => Word || Pdf || Latex || Json || Svg || AppendToWord;
+}
+
+public static class QuestionProjectWorkflow
+{
+    public static void ResetFinalGenerationSteps(QuestionProject project)
+    {
+        if (project.OutputSelection.Word || project.OutputSelection.AppendToWord)
+            ResetStep(project, TaskStep.WordExport);
+        if (project.OutputSelection.Pdf) ResetStep(project, TaskStep.PdfExport);
+        if (project.OutputSelection.Latex) ResetStep(project, TaskStep.LatexExport);
+        if (project.OutputSelection.Json) ResetStep(project, TaskStep.JsonExport);
+        if (project.OutputSelection.HasAnyOutput) ResetStep(project, TaskStep.AiReview);
+    }
+
+    private static void ResetStep(QuestionProject project, TaskStep step)
+    {
+        var record = project.Steps[step];
+        if (record.State == StepState.Running) return;
+        record.State = StepState.Pending;
+        record.Error = string.Empty;
+        record.CompletedAt = null;
+    }
 }
 
 public static class ProjectOutputPaths

@@ -579,57 +579,87 @@
                                             BorderThickness="1" CornerRadius="8" MinHeight="150" ClipToBounds="True">
                                         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                                       Padding="12,0">
-                                            <ItemsControl x:Name="TaskStepsList">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Border BorderBrush="#ECECEC" BorderThickness="0,0,0,1" Padding="2,14" Opacity="0">
-                                                            <Border.Triggers>
-                                                                <EventTrigger RoutedEvent="Border.Loaded">
-                                                                    <BeginStoryboard>
-                                                                        <Storyboard>
-                                                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                                                                                             To="1" Duration="0:0:0.18" />
-                                                                        </Storyboard>
-                                                                    </BeginStoryboard>
-                                                                </EventTrigger>
-                                                            </Border.Triggers>
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-                                                                <controls:FluentIcon Kind="{Binding Icon}" Width="16" Height="16"
-                                                                                     Foreground="{Binding StatusBrush}" VerticalAlignment="Center">
-                                                                    <controls:FluentIcon.Style>
-                                                                        <Style TargetType="controls:FluentIcon">
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding IsRunning}" Value="True">
-                                                                                    <DataTrigger.EnterActions>
-                                                                                        <BeginStoryboard>
-                                                                                            <Storyboard>
-                                                                                                <DoubleAnimation Storyboard.TargetProperty="RotationAngle"
-                                                                                                                 From="0" To="360" Duration="0:0:0.9"
-                                                                                                                 RepeatBehavior="Forever" />
-                                                                                            </Storyboard>
-                                                                                        </BeginStoryboard>
-                                                                                    </DataTrigger.EnterActions>
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </controls:FluentIcon.Style>
-                                                                </controls:FluentIcon>
-                                                                <StackPanel Grid.Column="1">
-                                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
-                                                                    <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource MutedBrush}"
-                                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
-                                                                </StackPanel>
-                                                                <Button Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="重试"
-                                                                        Padding="12,7" Tag="{Binding Step}" Visibility="{Binding RetryVisibility}"
-                                                                        Click="RetryStep_Click" />
-                                                            </Grid>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
+                                            <StackPanel>
+                                                <Border x:Name="GenerationSummaryCard" Background="#FFFFFF" BorderBrush="#EEEEEE"
+                                                        BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,12,0,4"
+                                                        Visibility="Collapsed">
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid>
+                                                            <TextBlock x:Name="GenerationSummaryTitle" Text="本次生成结果"
+                                                                       FontSize="13" FontWeight="SemiBold" />
+                                                            <Button Style="{StaticResource SecondaryButton}" Content="打开文件夹"
+                                                                    Padding="10,6" FontSize="12" HorizontalAlignment="Right"
+                                                                    Click="OpenFinalOutputFolder_Click" />
+                                                        </Grid>
+                                                        <TextBlock x:Name="GenerationSummaryText" Grid.Row="1" FontSize="11"
+                                                                   Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                                                                   Margin="0,8,0,0" />
+                                                        <TextBlock x:Name="GenerationSummaryFilesText" Grid.Row="2" FontSize="11"
+                                                                   Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                                                                   Margin="0,6,0,0" />
+                                                        <TextBlock x:Name="GenerationReviewText" Grid.Row="3" FontSize="11"
+                                                                   Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                                                                   Margin="0,6,0,0" />
+                                                    </Grid>
+                                                </Border>
+                                                <ItemsControl x:Name="TaskStepsList">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border BorderBrush="#ECECEC" BorderThickness="0,0,0,1" Padding="2,14" Opacity="0">
+                                                                <Border.Triggers>
+                                                                    <EventTrigger RoutedEvent="Border.Loaded">
+                                                                        <BeginStoryboard>
+                                                                            <Storyboard>
+                                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                                                                 To="1" Duration="0:0:0.18" />
+                                                                            </Storyboard>
+                                                                        </BeginStoryboard>
+                                                                    </EventTrigger>
+                                                                </Border.Triggers>
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <controls:FluentIcon Kind="{Binding Icon}" Width="16" Height="16"
+                                                                                         Foreground="{Binding StatusBrush}" VerticalAlignment="Center">
+                                                                        <controls:FluentIcon.Style>
+                                                                            <Style TargetType="controls:FluentIcon">
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                                                                        <DataTrigger.EnterActions>
+                                                                                            <BeginStoryboard>
+                                                                                                <Storyboard>
+                                                                                                    <DoubleAnimation Storyboard.TargetProperty="RotationAngle"
+                                                                                                                     From="0" To="360" Duration="0:0:0.9"
+                                                                                                                     RepeatBehavior="Forever" />
+                                                                                                </Storyboard>
+                                                                                            </BeginStoryboard>
+                                                                                        </DataTrigger.EnterActions>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </controls:FluentIcon.Style>
+                                                                    </controls:FluentIcon>
+                                                                    <StackPanel Grid.Column="1">
+                                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
+                                                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                                                   Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                                                    </StackPanel>
+                                                                    <Button Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="重试"
+                                                                            Padding="12,7" Tag="{Binding Step}" Visibility="{Binding RetryVisibility}"
+                                                                            Click="RetryStep_Click" />
+                                                                </Grid>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
                                         </ScrollViewer>
                                     </Border>
                                 </Grid>

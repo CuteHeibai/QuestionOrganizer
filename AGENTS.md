@@ -79,3 +79,8 @@
 - 不要上传 API Key、Token、`.env*`、`settings.json`、用户项目数据、用户输出目录或任何包含个人路径/凭据的配置。
 - 可以上传源码、测试、README、AGENTS、项目文件、默认模板等项目运行必需且不含私密信息的文件。
 - 推送前用关键词扫描检查 `sk-`、`api key`、`token`、`password`、`secret` 等敏感内容；命中时必须人工判断并移除不应公开的内容。
+
+## GitHub Issue Hygiene
+
+- 解决 bug 后，必须检查 GitHub Issues 中是否存在对应问题；如果本次修改已经解决，应在提交或发布后更新该 Issue，说明修复内容、关联提交或 Release，并关闭 Issue 或标记为已解决。
+- 优先使用 GitHub CLI（`gh issue list`、`gh issue view`、`gh issue comment`、`gh issue close`）查看和维护 Issue；如果当前环境未登录 GitHub、缺少权限或网络不可用，必须在最终回复中提醒用户需要配置 `gh auth login` 或提供可用权限，并说明哪些 Issue 仍需人工处理。

@@ -570,9 +570,10 @@ public partial class MainWindow : Window
         }
         var isRunning = _runningProjects.ContainsKey(project.Id);
         OutputConfigCard.Visibility = isRunning ? Visibility.Collapsed : Visibility.Visible;
-        TaskProgressCard.Visibility = isRunning || HasFailedStep(project) || HasStartedStep(project) && !project.IsComplete
+        TaskProgressCard.Visibility = isRunning || HasStartedStep(project)
             ? Visibility.Visible
             : Visibility.Collapsed;
+        RefreshGenerationSummary(project, isRunning);
         UpdateAiActivitySummary();
     }
 
@@ -634,8 +635,129 @@ public partial class MainWindow : Window
     private static bool HasStartedStep(QuestionProject project) =>
         project.Steps.Values.Any(step => step.Attempts > 0 || step.State is StepState.Running or StepState.Completed);
 
-    private static bool HasFailedStep(QuestionProject project) =>
-        project.Steps.Values.Any(step => step.State == StepState.Failed);
+    private void RefreshGenerationSummary(QuestionProject project, bool isRunning)
+    {
+        var summary = project.LastGeneration;
+        var hasSummary = isRunning ||
+                         summary.StartedAt is not null ||
+                         summary.CompletedAt is not null ||
+                         !string.IsNullOrWhiteSpace(summary.Message);
+        GenerationSummaryCard.Visibility = hasSummary ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasSummary) return;
+
+        if (isRunning)
+        {
+            GenerationSummaryTitle.Text = "正在生成";
+            GenerationSummaryText.Text = "运行中只显示进度，输出配置已临时收起，防止小窗口下流程被挤出。";
+            GenerationSummaryFilesText.Text = string.Empty;
+            GenerationReviewText.Text = string.Empty;
+            return;
+        }
+
+        GenerationSummaryTitle.Text = summary.Succeeded == false ? "本次生成未完成" : "本次生成结果";
+        GenerationSummaryText.Text = BuildGenerationStatusText(summary);
+        GenerationSummaryFilesText.Text = summary.Files.Count == 0
+            ? "暂未发现最终输出文件。"
+            : "文件：" + string.Join("、", summary.Files);
+        GenerationReviewText.Text = string.IsNullOrWhiteSpace(summary.ReviewSummary)
+            ? string.Empty
+            : "AI 复核：" + summary.ReviewSummary;
+    }
+
+    private static string BuildGenerationStatusText(GenerationSummary summary)
+    {
+        var started = summary.StartedAt?.ToString("HH:mm:ss");
+        var completed = summary.CompletedAt?.ToString("HH:mm:ss");
+        var status = summary.Succeeded switch
+        {
+            true => "已完成",
+            false => "有步骤失败，可在下方单独重试",
+            _ => "正在处理"
+        };
+        var timeText = started is not null && completed is not null
+            ? $"（{started} → {completed}）"
+            : started is not null
+                ? $"（开始于 {started}）"
+                : string.Empty;
+        return string.IsNullOrWhiteSpace(summary.Message)
+            ? status + timeText
+            : $"{summary.Message}{timeText}";
+    }
+
+    private async Task StartGenerationSummaryAsync(QuestionProject project, TaskStep? singleStep)
+    {
+        project.LastGeneration = new GenerationSummary
+        {
+            StartedAt = DateTimeOffset.Now,
+            Succeeded = null,
+            Message = singleStep is null
+                ? "已开始新一轮生成。"
+                : $"正在重试 {ProcessingTaskManager.DisplayName(singleStep.Value)}。",
+            Files = []
+        };
+        await _projectRepository.SaveAsync(project);
+    }
+
+    private async Task FinishGenerationSummaryAsync(QuestionProject project)
+    {
+        var visibleSteps = GetVisibleTaskSteps(project);
+        var failedStep = visibleSteps.FirstOrDefault(step => project.Steps[step].State == StepState.Failed);
+        var hasFailure = visibleSteps.Any(step => project.Steps[step].State == StepState.Failed);
+        var hasUnfinished = visibleSteps.Any(step => project.Steps[step].State is StepState.Pending or StepState.Running);
+        var succeeded = !hasFailure && !hasUnfinished;
+        var summary = project.LastGeneration;
+        summary.CompletedAt = DateTimeOffset.Now;
+        summary.Succeeded = succeeded;
+        summary.Message = succeeded
+            ? "本次生成完成。"
+            : hasFailure
+                ? $"{ProcessingTaskManager.DisplayName(failedStep)}失败，可在下方单独重试。"
+                : "本次生成尚未完成，可继续处理。";
+        summary.Files = BuildGeneratedFileSummary(project).ToList();
+        summary.ReviewSummary = await ReadReviewSummaryAsync(project);
+        await _projectRepository.SaveAsync(project);
+    }
+
+    private static IReadOnlyList<string> BuildGeneratedFileSummary(QuestionProject project)
+    {
+        var files = new List<string>();
+        var directory = ProjectOutputPaths.GetFinalDirectory(project);
+        var baseName = ProjectOutputPaths.GetBaseFileName(project);
+        AddIfExists(project.OutputSelection.Word, baseName + ".docx");
+        AddIfExists(project.OutputSelection.Pdf, baseName + ".pdf");
+        AddIfExists(project.OutputSelection.Latex, baseName + ".tex");
+        AddIfExists(project.OutputSelection.Json, baseName + ".json");
+        if (project.OutputSelection.Svg && Directory.Exists(directory))
+        {
+            files.AddRange(Directory
+                .EnumerateFiles(directory, baseName + "-*.svg")
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))!);
+        }
+        if (project.OutputSelection.AppendToWord && File.Exists(project.OutputSelection.AppendToWordPath))
+            files.Add("已追加：" + Path.GetFileName(project.OutputSelection.AppendToWordPath));
+        return files;
+
+        void AddIfExists(bool enabled, string fileName)
+        {
+            if (!enabled) return;
+            var path = Path.Combine(directory, fileName);
+            if (File.Exists(path)) files.Add(fileName);
+        }
+    }
+
+    private async Task<string> ReadReviewSummaryAsync(QuestionProject project)
+    {
+        try
+        {
+            var review = await _projectRepository.LoadDataAsync<OutputReviewResult>(project, "review.json");
+            return review?.Summary ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     private void PreviewFile_Click(object sender, RoutedEventArgs e)
     {
@@ -909,15 +1031,6 @@ public partial class MainWindow : Window
         if (project.OutputSelection.HasAnyOutput) ResetStep(project, TaskStep.AiReview);
     }
 
-    private static void ResetFinalGenerationSteps(QuestionProject project)
-    {
-        if (project.OutputSelection.Word || project.OutputSelection.AppendToWord) ResetStep(project, TaskStep.WordExport);
-        if (project.OutputSelection.Pdf) ResetStep(project, TaskStep.PdfExport);
-        if (project.OutputSelection.Latex) ResetStep(project, TaskStep.LatexExport);
-        if (project.OutputSelection.Json) ResetStep(project, TaskStep.JsonExport);
-        if (project.OutputSelection.HasAnyOutput) ResetStep(project, TaskStep.AiReview);
-    }
-
     private static void ResetStep(QuestionProject project, TaskStep step)
     {
         var record = project.Steps[step];
@@ -955,7 +1068,7 @@ public partial class MainWindow : Window
         if (_currentProject is null) return;
         await SaveProjectOutputOptionsAsync();
         if (!ValidateOutputSelection(_currentProject)) return;
-        if (_currentProject.IsComplete) ResetFinalGenerationSteps(_currentProject);
+        if (_currentProject.IsComplete) QuestionProjectWorkflow.ResetFinalGenerationSteps(_currentProject);
         _ = RunProjectInBackgroundAsync(_currentProject);
     }
 
@@ -984,6 +1097,7 @@ public partial class MainWindow : Window
         if (!TryCreateTaskManager(project, out var manager, out var provider)) return;
         var cancellation = new CancellationTokenSource();
         _runningProjects[project.Id] = cancellation;
+        await StartGenerationSummaryAsync(project, singleStep);
         AddLog(singleStep is null ? "AI 开始处理项目" : $"AI 准备重试 {ProcessingTaskManager.DisplayName(singleStep.Value)}");
         UpdateAiActivitySummary();
         if (_currentProject?.Id == project.Id) RefreshProjectView(project);
@@ -1004,6 +1118,7 @@ public partial class MainWindow : Window
             cancellation.Dispose();
             _runningProjects.Remove(project.Id);
             provider?.Dispose();
+            await FinishGenerationSummaryAsync(project);
             UpdateAiActivitySummary();
             if (_currentProject?.Id == project.Id) RefreshProjectView(project);
         }

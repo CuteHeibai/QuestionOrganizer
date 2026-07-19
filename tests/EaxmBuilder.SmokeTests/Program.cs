@@ -156,6 +156,35 @@ try
     if (!File.Exists(Path.Combine(selectedOutputDirectory, "review.json")))
         throw new InvalidOperationException("AI 复核步骤未生成 review.json。");
 
+    var regenerateProject = new QuestionProject
+    {
+        Name = "Regenerate",
+        DirectoryPath = Path.Combine(output, "regenerate"),
+        SourceFileName = "source.png",
+        OutputSelection = new OutputSelection
+        {
+            Word = true,
+            Pdf = true,
+            Latex = true,
+            Json = true,
+            Svg = true,
+            FileName = "Regenerate",
+            OutputDirectory = Path.Combine(output, "regenerate-final")
+        }
+    };
+    foreach (var step in regenerateProject.Steps.Values)
+        step.State = StepState.Completed;
+    QuestionProjectWorkflow.ResetFinalGenerationSteps(regenerateProject);
+    if (regenerateProject.Steps[TaskStep.Ocr].State != StepState.Completed ||
+        regenerateProject.Steps[TaskStep.FormulaRecognition].State != StepState.Completed ||
+        regenerateProject.Steps[TaskStep.FigureRedraw].State != StepState.Completed ||
+        regenerateProject.Steps[TaskStep.WordExport].State != StepState.Pending ||
+        regenerateProject.Steps[TaskStep.PdfExport].State != StepState.Pending ||
+        regenerateProject.Steps[TaskStep.LatexExport].State != StepState.Pending ||
+        regenerateProject.Steps[TaskStep.JsonExport].State != StepState.Pending ||
+        regenerateProject.Steps[TaskStep.AiReview].State != StepState.Pending)
+        throw new InvalidOperationException("再次生成未重置所有已选择的最终输出步骤。");
+
     var originalFigureDirectory = Path.Combine(output, "original-figure");
     Directory.CreateDirectory(originalFigureDirectory);
     await File.WriteAllBytesAsync(
