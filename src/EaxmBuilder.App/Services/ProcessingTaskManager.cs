@@ -136,19 +136,60 @@ public sealed class ProcessingTaskManager(
         if (document.Blocks.All(block => block.Type != QuestionBlockType.Figure)) return [];
 
         if (project.FigureMode == FigureProcessingMode.AiRedraw)
-            return await aiProvider.RedrawFiguresAsync(
+        {
+            var aiFigures = await aiProvider.RedrawFiguresAsync(
                 project.SourcePath, document, project.AiInstructions, cancellationToken);
+            return await EnsureCompleteFigureSetAsync(project, document, aiFigures, "AI 重绘", cancellationToken);
+        }
 
         if (project.FigureMode == FigureProcessingMode.ExternalToolThenOriginalImage)
         {
             var externalFigures = await TryCreateFiguresWithGeoGebraAsync(project, document, cancellationToken);
-            if (externalFigures.Count > 0) return externalFigures;
+            if (externalFigures.Count > 0)
+                return await EnsureCompleteFigureSetAsync(project, document, externalFigures, "GeoGebra", cancellationToken);
             externalFigures = await TryCreateFiguresWithExternalToolAsync(project, document, cancellationToken);
-            if (externalFigures.Count > 0) return externalFigures;
+            if (externalFigures.Count > 0)
+                return await EnsureCompleteFigureSetAsync(project, document, externalFigures, "外部图形工具", cancellationToken);
             LogAdded?.Invoke("内嵌 GeoGebra/外部图形工具未产出 SVG，已回退为几何图裁剪。");
         }
 
         return await CreateOriginalImageFiguresAsync(project, document, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FigureDocument>> EnsureCompleteFigureSetAsync(
+        QuestionProject project,
+        QuestionDocument document,
+        IReadOnlyList<FigureDocument> figures,
+        string sourceName,
+        CancellationToken cancellationToken)
+    {
+        var ids = GetFigureIds(document);
+        if (ids.Count == 0) return figures;
+
+        var byId = figures
+            .Where(figure => !string.IsNullOrWhiteSpace(figure.Id) && HasReadableSvg(figure.Svg))
+            .GroupBy(figure => figure.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var missing = ids.Where(id => !byId.ContainsKey(id)).ToArray();
+        if (missing.Length == 0) return ids.Select(id => byId[id]).ToList();
+
+        var fallbackFigures = await CreateOriginalImageFiguresAsync(project, document, cancellationToken);
+        var fallbackById = fallbackFigures
+            .Where(figure => !string.IsNullOrWhiteSpace(figure.Id) && HasReadableSvg(figure.Svg))
+            .GroupBy(figure => figure.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var id in missing)
+        {
+            if (fallbackById.TryGetValue(id, out var fallback))
+                byId[id] = fallback;
+        }
+
+        var stillMissing = ids.Where(id => !byId.ContainsKey(id)).ToArray();
+        if (stillMissing.Length > 0)
+            LogAdded?.Invoke($"{sourceName}未生成 {string.Join("、", stillMissing)}，且原图裁剪也无法补齐。");
+        else
+            LogAdded?.Invoke($"{sourceName}未覆盖全部图形，缺失部分已用原图裁剪补齐。");
+        return ids.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
     }
 
     private async Task<IReadOnlyList<FigureDocument>> TryCreateFiguresWithGeoGebraAsync(

@@ -104,11 +104,25 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var figures = new List<FigureDocument>();
+        var failures = new List<string>();
         foreach (var id in ids)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            figures.Add(await RedrawSingleFigureAsync(sourcePath, document, id, additionalInstructions, cancellationToken));
+            try
+            {
+                figures.Add(await RedrawSingleFigureAsync(sourcePath, document, id, additionalInstructions, cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                failures.Add($"{id}: {exception.Message}");
+            }
         }
+        if (figures.Count == 0 && failures.Count > 0)
+            throw new InvalidOperationException(string.Join("；", failures));
         return figures;
     }
 
@@ -127,11 +141,25 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var figures = new List<FigureDocument>();
+        var failures = new List<string>();
         foreach (var id in ids)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            figures.Add(await CreateSingleGeoGebraFigureAsync(sourcePath, document, id, additionalInstructions, cancellationToken));
+            try
+            {
+                figures.Add(await CreateSingleGeoGebraFigureAsync(sourcePath, document, id, additionalInstructions, cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                failures.Add($"{id}: {exception.Message}");
+            }
         }
+        if (figures.Count == 0 && failures.Count > 0)
+            throw new InvalidOperationException(string.Join("；", failures));
         return figures;
     }
 
