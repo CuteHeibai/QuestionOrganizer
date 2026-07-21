@@ -269,7 +269,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 new XAttribute("Id", relationshipId),
                 new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"),
                 new XAttribute("Target", $"media/{fileName}")));
-            var widthEmu = 5_486_400L;
+            var widthEmu = 4_663_440L;
             var heightEmu = Math.Max(457_200L,
                 (long)(widthEmu * (double)renderedFigure.PixelHeight / renderedFigure.PixelWidth));
             assets[renderedFigure.Id] = new FigureAsset(
@@ -351,8 +351,8 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                     var hasImageChoices = Enumerable.Range(index + 1, document.Blocks.Count - index - 1)
                         .Any(candidate => IsChoicePair(document.Blocks, candidate));
                     body.Add(CreateImageParagraph(asset,
-                        hasImageChoices ? 2_011_680L : 5_029_200L,
-                        hasImageChoices ? 1_828_800L : 3_657_600L));
+                        hasImageChoices ? 1_828_800L : 4_343_400L,
+                        hasImageChoices ? 1_645_920L : 3_200_400L));
                     break;
             }
         }
@@ -400,7 +400,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
             new XElement(W + "tcPr",
                 new XElement(W + "tcW", new XAttribute(W + "w", figureWidth), new XAttribute(W + "type", "dxa")),
                 new XElement(W + "vAlign", new XAttribute(W + "val", "center"))),
-            CreateImageParagraph(targetAsset, 1_737_360L, 1_645_920L));
+            CreateImageParagraph(targetAsset, 1_554_480L, 1_463_040L));
         return new XElement(W + "tbl",
             new XElement(W + "tblPr",
                 new XElement(W + "tblW", new XAttribute(W + "w", totalWidth), new XAttribute(W + "type", "dxa")),
@@ -457,7 +457,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 {
                     var choice = choices[choiceIndex];
                     cell.Add(CreateCompactLabel(choice.Label));
-                    cell.Add(CreateImageParagraph(choice.Asset, 1_188_720L, 1_371_600L));
+                    cell.Add(CreateImageParagraph(choice.Asset, 1_097_280L, 1_280_160L));
                 }
                 else
                 {

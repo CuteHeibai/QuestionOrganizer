@@ -182,7 +182,7 @@ internal static class GeoGebraRenderer
         if (Math.Abs(maxX - minX) < 0.001 || Math.Abs(maxY - minY) < 0.001) return false;
 
         const double width = 720;
-        const double margin = 58;
+        const double margin = 78;
         var scale = (width - margin * 2) / Math.Max(maxX - minX, 0.001);
         var height = Math.Clamp((maxY - minY) * scale + margin * 2, 180, 520);
 
@@ -195,7 +195,7 @@ internal static class GeoGebraRenderer
         foreach (var (start, end) in segments)
             builder.Append(CultureInfo.InvariantCulture, $"""<line x1="{X(start)}" y1="{Y(start)}" x2="{X(end)}" y2="{Y(end)}"/>""");
         builder.Append("</g>");
-        builder.Append("""<g fill="#202020" font-family="SimSun, 宋体, Songti SC, STSong, serif" font-size="24">""");
+        builder.Append("""<g fill="#202020" font-family="SimSun, 宋体, Songti SC, STSong, serif" font-size="22">""");
         foreach (var label in labels)
             builder.Append(CultureInfo.InvariantCulture, $"""<text x="{X(label.Position)}" y="{Y(label.Position)}">{WebUtility.HtmlEncode(label.Text)}</text>""");
         builder.Append("</g></svg>");
@@ -478,11 +478,13 @@ internal static class GeoGebraRenderer
         var maxX = useRelevant ? relevant.X + relevant.Width - 1 : fullMaxX;
         var maxY = useRelevant ? relevant.Y + relevant.Height - 1 : fullMaxY;
 
-        var padding = Math.Max(36, Math.Min(width, height) / 20);
-        minX = Math.Max(0, minX - padding);
-        minY = Math.Max(0, minY - padding);
-        maxX = Math.Min(width - 1, maxX + padding);
-        maxY = Math.Min(height - 1, maxY + padding);
+        var horizontalPadding = Math.Max(44, Math.Min(width, height) / 18);
+        var topPadding = Math.Max(72, Math.Min(width, height) / 12);
+        var bottomPadding = Math.Max(44, Math.Min(width, height) / 18);
+        minX = Math.Max(0, minX - horizontalPadding);
+        minY = Math.Max(0, minY - topPadding);
+        maxX = Math.Min(width - 1, maxX + horizontalPadding);
+        maxY = Math.Min(height - 1, maxY + bottomPadding);
         return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
     }
 

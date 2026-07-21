@@ -378,11 +378,13 @@ public sealed class ProcessingTaskManager(
         var maxX = useRelevant ? relevant.X + relevant.Width - 1 : fullMaxX;
         var maxY = useRelevant ? relevant.Y + relevant.Height - 1 : fullMaxY;
 
-        var padding = Math.Max(24, Math.Min(width, height) / 30);
-        minX = Math.Max(0, minX - padding);
-        minY = Math.Max(0, minY - padding);
-        maxX = Math.Min(width - 1, maxX + padding);
-        maxY = Math.Min(height - 1, maxY + padding);
+        var horizontalPadding = Math.Max(28, Math.Min(width, height) / 26);
+        var topPadding = Math.Max(56, Math.Min(width, height) / 14);
+        var bottomPadding = Math.Max(32, Math.Min(width, height) / 24);
+        minX = Math.Max(0, minX - horizontalPadding);
+        minY = Math.Max(0, minY - topPadding);
+        maxX = Math.Min(width - 1, maxX + horizontalPadding);
+        maxY = Math.Min(height - 1, maxY + bottomPadding);
         return new SourceImageBounds(minX, minY, maxX - minX + 1, maxY - minY + 1, width, height);
     }
 
@@ -448,9 +450,9 @@ public sealed class ProcessingTaskManager(
                 .ToArray();
         }
 
-        var horizontalPadding = Math.Max(40, width / 24);
-        var topPadding = Math.Max(80, height / 20);
-        var bottomPadding = Math.Max(70, height / 24);
+        var horizontalPadding = Math.Max(48, width / 22);
+        var topPadding = Math.Max(140, height / 10);
+        var bottomPadding = Math.Max(80, height / 22);
         return components
             .Select(component =>
             {

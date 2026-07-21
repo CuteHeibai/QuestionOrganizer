@@ -65,7 +65,7 @@ internal static partial class MathTextFormatter
 
         ["le"] = "≤", ["leq"] = "≤", ["leqslant"] = "≤", ["ge"] = "≥", ["geq"] = "≥", ["geqslant"] = "≥",
         ["neq"] = "≠", ["ne"] = "≠", ["equiv"] = "≡", ["approx"] = "≈", ["sim"] = "∼",
-        ["simeq"] = "≃", ["cong"] = "≅", ["propto"] = "∝", ["parallel"] = "∥",
+        ["simeq"] = "≃", ["cong"] = "≅", ["propto"] = "∝", ["parallel"] = "//",
         ["perp"] = "⊥", ["mid"] = "∣", ["nmid"] = "∤",
 
         ["in"] = "∈", ["notin"] = "∉", ["ni"] = "∋", ["subset"] = "⊂", ["supset"] = "⊃",

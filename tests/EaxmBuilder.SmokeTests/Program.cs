@@ -47,7 +47,7 @@ try
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "其中" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\triangle ABC,\ \mathrm{AB}\perp CD,\ \sqrt{x_1^2}+\angle A+\sin\theta" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\customstar+\widearc{AB}" },
-            new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "如图，angle ABC和angle ADC的角平分线分别交AD、BC于E、F。过F作FG perp BE于G。" },
+            new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "如图，angle ABC和angle ADC的角平分线分别交AD、BC于E、F。过F作FG perp BE于G，且FG parallel AE。" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "（2）若GF = sqrt2，HF = (1)/(2)，求triangle DHF的面积；" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = @"补充：若 AB=\sqrt{2}，求 \triangle ABC 的面积。" },
             new QuestionBlock { Type = QuestionBlockType.Figure, FigureId = "figure1" }
@@ -510,8 +510,10 @@ try
             xml.Contains("sqrt2", StringComparison.Ordinal) ||
             xml.Contains("(1)/(2)", StringComparison.Ordinal) ||
             xml.Contains("triangle DHF", StringComparison.Ordinal) ||
+            xml.Contains("FG ∥ AE", StringComparison.Ordinal) ||
             !xml.Contains("∠ ABC", StringComparison.Ordinal) ||
             !xml.Contains("FG ⊥ BE", StringComparison.Ordinal) ||
+            !xml.Contains("FG // AE", StringComparison.Ordinal) ||
             !xml.Contains("<m:rad>", StringComparison.Ordinal) ||
             !xml.Contains("<m:f>", StringComparison.Ordinal) ||
             !xml.Contains("△ DHF", StringComparison.Ordinal) ||
@@ -542,8 +544,10 @@ try
         decodedHtml.Contains("sqrt2", StringComparison.Ordinal) ||
         decodedHtml.Contains("(1)/(2)", StringComparison.Ordinal) ||
         decodedHtml.Contains("triangle DHF", StringComparison.Ordinal) ||
+        decodedHtml.Contains("FG ∥ AE", StringComparison.Ordinal) ||
         !decodedHtml.Contains("∠ ABC", StringComparison.Ordinal) ||
         !decodedHtml.Contains("FG ⊥ BE", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("FG // AE", StringComparison.Ordinal) ||
         !decodedHtml.Contains("<msqrt>", StringComparison.Ordinal) ||
         !decodedHtml.Contains("<mfrac>", StringComparison.Ordinal) ||
         !decodedHtml.Contains("△ DHF", StringComparison.Ordinal))
