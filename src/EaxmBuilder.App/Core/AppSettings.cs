@@ -17,6 +17,8 @@ public sealed class AppSettings
     public Dictionary<AiProviderKind, AiProviderSettings> ProviderProfiles { get; set; } = [];
     public string OutputDirectory { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "题目整理");
+    public string FinalOutputDirectory { get; set; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "题目整理", "最终输出");
     public string Theme { get; set; } = "浅色";
     public string WordTemplatePath { get; set; } = string.Empty;
 }

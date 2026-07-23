@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -32,21 +34,21 @@ public partial class MainWindow : Window
             "OpenAI",
             "https://api.openai.com/v1",
             "gpt-5.5",
-            ["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
-            "推荐 gpt-5.6；terra 侧重成本平衡，luna 适合高吞吐。也可以直接输入模型 ID。"),
+            ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "codex-mini-latest", "gpt-4.1", "gpt-4.1-mini", "gpt-4o"],
+            "推荐 gpt-5.6 / gpt-5.5 这类视觉和长上下文更强的模型；也可以直接输入服务商模型 ID。"),
         [AiProviderKind.OpenAiCompatible] = new(
             AiProviderKind.OpenAiCompatible,
             "OpenAI Compatible",
             "https://api.openai.com/v1",
             "gpt-5.5",
-            ["gpt-5.6", "gpt-5.5", "gpt-4.1", "gpt-4o"],
+            ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "codex-mini-latest", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "qwen-vl-max", "qwen-plus", "moonshot-v1-128k", "claude-sonnet-4", "doubao-seed-1-6-vision-250815"],
             "请选择兼容服务支持的模型，或输入服务商文档中的模型 ID。"),
         [AiProviderKind.Doubao] = new(
             AiProviderKind.Doubao,
             "火山豆包",
             "https://ark.cn-beijing.volces.com/api/v3",
             "doubao-seed-2-1-pro-260628",
-            ["doubao-seed-2-1-pro-260628", "doubao-seed-2-1-turbo-260628", "doubao-seed-evolving", "doubao-seed-1-6-vision-250815"],
+            ["doubao-seed-2-1-pro-260628", "doubao-seed-2-1-turbo-260628", "doubao-seed-evolving", "doubao-seed-1-6-vision-250815", "doubao-1-5-thinking-vision-pro-250428", "doubao-1-5-vision-pro-250328", "doubao-1-5-pro-32k-250115", "doubao-1-5-lite-32k-250115"],
             "题目图片处理建议选择支持多模态理解的模型；火山方舟中也可以直接输入你创建的推理接入点 ID。")
     };
 
@@ -62,6 +64,7 @@ public partial class MainWindow : Window
     private bool _isPopulatingProjectOptions;
     private AiProviderKind _activeSettingsProvider = AiProviderKind.OpenAi;
     private PreviewFile? _activePreviewFile;
+    private QuestionProject? _renamingProject;
 
     public MainWindow()
     {
@@ -70,6 +73,9 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        AboutVersionText.Text = "版本 " + GetAppVersionText();
+        WindowState = WindowState.Maximized;
+        ApplyMaximizedWorkArea();
         _settings = await _settingsStore.LoadAsync();
         var providerMigrated = NormalizeUnsupportedProvider();
         if (providerMigrated) await _settingsStore.SaveAsync(_settings);
@@ -119,6 +125,13 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape && AiInstructionsOverlay.Visibility == Visibility.Visible)
         {
             CloseAiInstructionsOverlay();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Escape && RenameProjectOverlay.Visibility == Visibility.Visible)
+        {
+            CloseRenameProjectOverlay();
             e.Handled = true;
             return;
         }
@@ -294,9 +307,10 @@ public partial class MainWindow : Window
                 BaseUrl = item.Value.BaseUrl,
                 Model = item.Value.Model
             }),
-        OutputDirectory = settings.OutputDirectory,
-        Theme = settings.Theme,
-        WordTemplatePath = settings.WordTemplatePath
+            OutputDirectory = settings.OutputDirectory,
+            FinalOutputDirectory = settings.FinalOutputDirectory,
+            Theme = settings.Theme,
+            WordTemplatePath = settings.WordTemplatePath
     };
 
     private static void MirrorActiveProvider(AppSettings settings)
@@ -437,7 +451,10 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _currentProject = await _projectRepository.CreateAsync(sourcePath, _settings.OutputDirectory);
+        _currentProject = await _projectRepository.CreateAsync(
+            sourcePath,
+            _settings.OutputDirectory,
+            GetDefaultFinalOutputRoot());
             AddLog("已创建项目");
             ShowProject(_currentProject);
         }
@@ -516,6 +533,110 @@ public partial class MainWindow : Window
     private void AllProject_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: QuestionProject project }) ShowProject(project);
+    }
+
+    private void OpenProjectFolderFromList_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: QuestionProject project })
+            OpenFolder(project.DirectoryPath);
+    }
+
+    private void RenameProject_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: QuestionProject project }) return;
+        if (_runningProjects.ContainsKey(project.Id))
+        {
+            ShowNotice("项目正在处理", "请在项目处理结束后再改名。");
+            return;
+        }
+
+        _renamingProject = project;
+        RenameProjectNameBox.Text = project.Name;
+        RenameProjectNameBox.CaretIndex = RenameProjectNameBox.Text.Length;
+        RenameProjectOverlay.Visibility = Visibility.Visible;
+        FadeIn(RenameProjectOverlay);
+        RenameProjectNameBox.Focus();
+        RenameProjectNameBox.SelectAll();
+    }
+
+    private async void SaveRenameProject_Click(object sender, RoutedEventArgs e)
+    {
+        await SaveRenameProjectAsync();
+    }
+
+    private async Task SaveRenameProjectAsync()
+    {
+        if (_renamingProject is null) return;
+        try
+        {
+            await _projectRepository.RenameAsync(_renamingProject, RenameProjectNameBox.Text);
+            if (_currentProject?.Id == _renamingProject.Id)
+            {
+                _currentProject = _renamingProject;
+                ProjectTitle.Text = _renamingProject.Name;
+                PopulateProjectOutputOptions(_renamingProject);
+                RefreshProjectView(_renamingProject);
+            }
+            CloseRenameProjectOverlay();
+            await LoadProjectsAsync();
+            await LoadRecentAsync();
+        }
+        catch (Exception exception)
+        {
+            ShowNotice("无法改名项目", exception.Message);
+        }
+    }
+
+    private void RenameProjectNameBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        _ = SaveRenameProjectAsync();
+    }
+
+    private void CancelRenameProject_Click(object sender, RoutedEventArgs e) => CloseRenameProjectOverlay();
+
+    private void CloseRenameProjectOverlay()
+    {
+        RenameProjectOverlay.Visibility = Visibility.Collapsed;
+        RenameProjectNameBox.Clear();
+        _renamingProject = null;
+    }
+
+    private async void DeleteProject_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: QuestionProject project }) return;
+        await DeleteProjectsAsync([project]);
+    }
+
+    private async void DeleteSelectedProjects_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = AllProjectsList.SelectedItems
+            .OfType<QuestionProject>()
+            .ToList();
+        if (selected.Count == 0)
+        {
+            ShowNotice("没有选中项目", "请先在项目总览中选中一个或多个项目。");
+            return;
+        }
+        await DeleteProjectsAsync(selected);
+    }
+
+    private async Task DeleteProjectsAsync(IReadOnlyList<QuestionProject> projects)
+    {
+        var deletable = projects
+            .Where(project => !_runningProjects.ContainsKey(project.Id))
+            .ToList();
+        var skipped = projects.Count - deletable.Count;
+        foreach (var project in deletable)
+            await _projectRepository.DeleteAsync(project);
+        if (_currentProject is not null && deletable.Any(project => project.Id == _currentProject.Id))
+            _currentProject = null;
+        await LoadProjectsAsync();
+        await LoadRecentAsync();
+        ShowNotice("项目已删除", skipped == 0
+            ? $"已将 {deletable.Count} 个项目移入回收站。"
+            : $"已将 {deletable.Count} 个项目移入回收站；{skipped} 个正在处理的项目已跳过。");
     }
 
     private void ShowProject(QuestionProject project)
@@ -624,13 +745,17 @@ public partial class MainWindow : Window
             string.Equals(project.OutputSelection.OutputDirectory.Trim(), legacyLocalOutput, StringComparison.OrdinalIgnoreCase))
         {
             project.OutputSelection.OutputDirectory = Path.Combine(
-                _settings.OutputDirectory,
-                "最终输出",
+                GetDefaultFinalOutputRoot(),
                 Path.GetFileName(project.DirectoryPath));
             changed = true;
         }
         if (changed) _ = _projectRepository.SaveAsync(project);
     }
+
+    private string GetDefaultFinalOutputRoot() =>
+        string.IsNullOrWhiteSpace(_settings.FinalOutputDirectory)
+            ? Path.Combine(_settings.OutputDirectory, "最终输出")
+            : _settings.FinalOutputDirectory.Trim();
 
     private static bool HasStartedStep(QuestionProject project) =>
         project.Steps.Values.Any(step => step.Attempts > 0 || step.State is StepState.Running or StepState.Completed);
@@ -744,6 +869,16 @@ public partial class MainWindow : Window
             var path = Path.Combine(directory, fileName);
             if (File.Exists(path)) files.Add(fileName);
         }
+    }
+
+    private void Window_StateChanged(object? sender, EventArgs e) => ApplyMaximizedWorkArea();
+
+    private void ApplyMaximizedWorkArea()
+    {
+        if (WindowState != WindowState.Maximized) return;
+        var workArea = SystemParameters.WorkArea;
+        MaxWidth = Math.Max(MinWidth, workArea.Width);
+        MaxHeight = Math.Max(MinHeight, workArea.Height - 1);
     }
 
     private async Task<string> ReadReviewSummaryAsync(QuestionProject project)
@@ -1201,7 +1336,7 @@ public partial class MainWindow : Window
     private void OpenProjectFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentProject is null || !Directory.Exists(_currentProject.DirectoryPath)) return;
-        Process.Start(new ProcessStartInfo("explorer.exe", _currentProject.DirectoryPath) { UseShellExecute = true });
+        OpenFolder(_currentProject.DirectoryPath);
     }
 
     private void OpenFinalOutputFolder_Click(object sender, RoutedEventArgs e)
@@ -1210,7 +1345,7 @@ public partial class MainWindow : Window
         try
         {
             var directory = ProjectOutputPaths.EnsureFinalDirectory(_currentProject);
-            Process.Start(new ProcessStartInfo("explorer.exe", directory) { UseShellExecute = true });
+            OpenFolder(directory);
         }
         catch (Exception exception)
         {
@@ -1314,6 +1449,7 @@ public partial class MainWindow : Window
                 _settings.Provider,
                 profile.Model);
             OutputDirectoryBox.Text = _settings.OutputDirectory;
+            FinalOutputDirectoryBox.Text = GetDefaultFinalOutputRoot();
             WordTemplateBox.Text = _settings.WordTemplatePath;
             ThemeBox.SelectedIndex = 0;
             SettingsApiKeyBox.Password = string.Empty;
@@ -1431,14 +1567,19 @@ public partial class MainWindow : Window
     {
         if (_isPopulatingSettings) return;
         var outputDirectory = OutputDirectoryBox.Text.Trim();
+        var finalOutputDirectory = FinalOutputDirectoryBox.Text.Trim();
         var wordTemplatePath = WordTemplateBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(outputDirectory))
-            throw new InvalidOperationException("默认输出目录不能为空。");
+            throw new InvalidOperationException("项目保存目录不能为空。");
+        if (string.IsNullOrWhiteSpace(finalOutputDirectory))
+            throw new InvalidOperationException("默认最终输出目录不能为空。");
         if (!string.IsNullOrWhiteSpace(wordTemplatePath) && !File.Exists(wordTemplatePath))
             throw new FileNotFoundException("找不到所选 Word 模板。", wordTemplatePath);
 
         Directory.CreateDirectory(outputDirectory);
+        Directory.CreateDirectory(finalOutputDirectory);
         _settings.OutputDirectory = outputDirectory;
+        _settings.FinalOutputDirectory = finalOutputDirectory;
         _settings.WordTemplatePath = wordTemplatePath;
         _settings.Theme = "浅色";
         await _settingsStore.SaveAsync(_settings);
@@ -1487,9 +1628,59 @@ public partial class MainWindow : Window
 
     private async void ChooseOutputDirectory_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "选择默认输出目录", Multiselect = false };
+        var dialog = new OpenFolderDialog { Title = "选择项目保存目录", Multiselect = false };
         if (dialog.ShowDialog(this) != true) return;
         OutputDirectoryBox.Text = dialog.FolderName;
+        try { await SaveCommonSettingsAsync(); }
+        catch (Exception exception) { SetFeedback(SettingsFeedback, exception.Message, false); }
+    }
+
+    private static void OpenFolder(string directory)
+    {
+        if (!Directory.Exists(directory)) return;
+        var fullPath = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (TryFocusExplorerWindow(fullPath)) return;
+        Process.Start(new ProcessStartInfo("explorer.exe", fullPath) { UseShellExecute = true });
+    }
+
+    private static bool TryFocusExplorerWindow(string directory)
+    {
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("Shell.Application");
+            if (shellType is null) return false;
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            foreach (dynamic window in shell.Windows())
+            {
+                string? locationUrl = window.LocationURL as string;
+                if (string.IsNullOrWhiteSpace(locationUrl)) continue;
+                var localPath = Path.GetFullPath(Uri.UnescapeDataString(new Uri(locationUrl).LocalPath))
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!string.Equals(localPath, directory, StringComparison.OrdinalIgnoreCase)) continue;
+                var handle = new IntPtr((int)window.HWND);
+                ShowWindow(handle, 9);
+                SetForegroundWindow(handle);
+                return true;
+            }
+        }
+        catch
+        {
+            // Falling back to explorer.exe is preferable to blocking the user with a COM failure.
+        }
+        return false;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private async void ChooseFinalOutputDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "选择默认最终输出目录", Multiselect = false };
+        if (dialog.ShowDialog(this) != true) return;
+        FinalOutputDirectoryBox.Text = dialog.FolderName;
         try { await SaveCommonSettingsAsync(); }
         catch (Exception exception) { SetFeedback(SettingsFeedback, exception.Message, false); }
     }
@@ -1542,6 +1733,30 @@ public partial class MainWindow : Window
             false => (Brush)Application.Current.Resources["ErrorBrush"],
             null => (Brush)Application.Current.Resources["MutedBrush"]
         };
+    }
+
+    private static string GetAppVersionText()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var version = assembly.GetName().Version?.ToString(3) ?? "开发版";
+        try
+        {
+            var startInfo = new ProcessStartInfo("git", "rev-parse --short HEAD")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+            using var process = Process.Start(startInfo);
+            var revision = process?.StandardOutput.ReadToEnd().Trim();
+            process?.WaitForExit(800);
+            if (!string.IsNullOrWhiteSpace(revision)) return $"{version} ({revision})";
+        }
+        catch
+        {
+            // Published ZIPs do not contain .git; assembly version is enough there.
+        }
+        return version;
     }
 
     private void CheckUpdates_Click(object sender, RoutedEventArgs e) =>

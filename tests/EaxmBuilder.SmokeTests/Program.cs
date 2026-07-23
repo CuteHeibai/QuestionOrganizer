@@ -46,6 +46,7 @@ try
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = "x^2+y^2=1" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "其中" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\triangle ABC,\ \mathrm{AB}\perp CD,\ \sqrt{x_1^2}+\angle A+\sin\theta" },
+            new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\sinh x+\cosh y+\sum a_i+\prod b_i+\gcd(6,9)+\normaldist(0,1)" },
             new QuestionBlock { Type = QuestionBlockType.Formula, Latex = @"\customstar+\widearc{AB}" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "如图，angle ABC和angle ADC的角平分线分别交AD、BC于E、F。过F作FG perp BE于G，且FG parallel AE。" },
             new QuestionBlock { Type = QuestionBlockType.Paragraph, Text = "（2）若GF = sqrt2，HF = (1)/(2)，求triangle DHF的面积；" },
@@ -397,7 +398,7 @@ try
         BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("无法检查 Responses 请求结构。");
     var responsesRequest = createResponsesRequest.Invoke(customProvider,
-        ["question.png", "data:image/png;base64,AA==", "prompt"]);
+        ["question.png", "data:image/png;base64,AA==", "prompt", "high"]);
     var responsesRequestJson = JsonSerializer.Serialize(responsesRequest);
     if (!responsesRequestJson.Contains("max_output_tokens", StringComparison.Ordinal) ||
         !responsesRequestJson.Contains("xhigh", StringComparison.Ordinal) ||
@@ -518,7 +519,9 @@ try
             !xml.Contains("<m:f>", StringComparison.Ordinal) ||
             !xml.Contains("△ DHF", StringComparison.Ordinal) ||
             xml.Contains(@"\sqrt", StringComparison.Ordinal) ||
-            xml.Contains(@"\triangle", StringComparison.Ordinal))
+            xml.Contains(@"\triangle", StringComparison.Ordinal) ||
+            xml.Contains(@"\sinh", StringComparison.Ordinal) ||
+            xml.Contains(@"\normaldist", StringComparison.Ordinal))
             throw new InvalidOperationException("DOCX 正文中的裸 LaTeX/OCR 命令未能解析为数学符号或结构化公式。");
     }
 
@@ -531,12 +534,18 @@ try
     if (decodedHtml.Contains(@"\triangle", StringComparison.Ordinal) ||
         decodedHtml.Contains(@"\mathrm", StringComparison.Ordinal) ||
         decodedHtml.Contains(@"\sqrt", StringComparison.Ordinal) ||
+        decodedHtml.Contains(@"\sinh", StringComparison.Ordinal) ||
+        decodedHtml.Contains(@"\normaldist", StringComparison.Ordinal) ||
         decodedHtml.Contains(@"\customstar", StringComparison.Ordinal) ||
         decodedHtml.Contains(@"\widearc", StringComparison.Ordinal) ||
         !decodedHtml.Contains("△ ABC", StringComparison.Ordinal) ||
         !decodedHtml.Contains("AB⊥ CD", StringComparison.Ordinal) ||
         !decodedHtml.Contains("<msqrt>", StringComparison.Ordinal) ||
         !decodedHtml.Contains("∠ A+sinθ", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("sinh", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("normaldist", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("∑", StringComparison.Ordinal) ||
+        !decodedHtml.Contains("∏", StringComparison.Ordinal) ||
         !decodedHtml.Contains("★+⌒AB", StringComparison.Ordinal))
         throw new InvalidOperationException("LaTeX 常见命令未能解析为可读数学符号或结构化公式。");
     if (decodedHtml.Contains("angle ABC", StringComparison.Ordinal) ||

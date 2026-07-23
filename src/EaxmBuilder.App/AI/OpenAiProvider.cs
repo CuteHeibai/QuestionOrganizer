@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using EaxmBuilder.Core;
 
 namespace EaxmBuilder.AI;
@@ -170,9 +172,9 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         string additionalInstructions,
         CancellationToken cancellationToken = default)
     {
-        var documentJson = JsonSerializer.Serialize(document, JsonOptions);
+        var documentJson = JsonSerializer.Serialize(CreateReviewSnapshot(document), JsonOptions);
         var generatedText = string.Join("\n\n", generatedFiles.Select(item =>
-            $"--- {item.Key} ---\n{TrimForPrompt(item.Value, 12_000)}"));
+            $"--- {item.Key} ---\n{TrimForPrompt(item.Value, 4_000)}"));
         var prompt = $$"""
             你是数学题目整理软件的质量检查 AI。请对照原始题目图片，检查软件生成的结构化内容和导出底稿是否有错误。
 
@@ -188,13 +190,18 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             仅返回 JSON 对象，字段必须包括 passed、summary、issues、correctedDocument。
             通过时 correctedDocument 为 null；需要修正时 correctedDocument 为完整 QuestionDocument。
 
-            当前结构化文档：
+            当前结构化文档摘要（图形 SVG 已省略，避免上下文过大）：
             {{{documentJson}}}
 
             已生成文件文本摘要：
             {{{generatedText}}}
             """ + FormatAdditionalInstructions(additionalInstructions);
-        return RequestJsonAsync<OutputReviewResult>(sourcePath, prompt, cancellationToken);
+        return RequestJsonAsync<OutputReviewResult>(
+            sourcePath,
+            prompt,
+            cancellationToken,
+            imageDetail: "low",
+            maxImageSide: 1200);
     }
 
     private async Task<FigureDocument> RedrawSingleFigureAsync(
@@ -207,11 +214,14 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         var figureMap = DescribeFigureMap(document);
         var prompt = $$"""
             精确观察原图中的数学图形，并只为编号 {{figureId}} 重新绘制一张干净的 SVG。
+            必须以原始图片中该图的实际几何位置、端点、交点、线段终止位置为第一标准；题干文字只能辅助理解，不能凭文字描述脑补或改造图形。
             请像使用图像生成工具重新绘制图片一样生成矢量图：只保留题目需要的图形内容，不要截图、不要描摹成位图、不要嵌入原图。
             题目中的图形编号对应关系如下：
             {{figureMap}}
 
             保留点名、线型、角标、箭头、坐标轴及相对位置。不要把原图嵌入 SVG。
+            所有直线段必须使用 <line> 或只含 M/L 的 <path>；禁止把本应笔直的线段画成 polyline 折线或贝塞尔曲线。
+            每条线段必须在原图对应端点、交点或边界处终止，不要越过端点，也不要短一截。
             只绘制 {{figureId}} 对应的几何图/函数图本体和图内点名、图号；不要绘制题干正文、问号、LaTeX 公式、条件说明或小问文字。
             图内点名必须避开线段和交点，优先放在线段外侧，并与最近线段保持至少 10px 间距；禁止把点名直接压在线段上。
             禁止给文字加白底、白色描边、白色遮罩或半透明底色来盖住线段；如果标注空间不足，请扩大 SVG viewBox 并把点名外移。
@@ -250,6 +260,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         var questionContext = DescribeQuestionContext(document);
         var prompt = $$"""
             精确观察原图中的数学图形，并只为编号 {{figureId}} 生成 GeoGebra 绘图命令。
+            必须以原始图片中该图的实际几何位置、端点、交点、线段终止位置为第一标准；题干文字只能辅助理解，不能凭文字描述脑补或改造图形。
             题目中的图形编号对应关系如下：
             {{figureMap}}
 
@@ -265,6 +276,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             5. 所有线条和文字最终会被统一成黑色，请不要使用彩色样式；
             6. 点名、线段、垂线、角平分线、坐标轴、标注位置要尽量贴近原图；
             7. 每个可见交点或端点必须只定义一次命名点。所有经过该点的线段必须引用同一个点对象，例如 Segment(G,D)、Segment(G,F)，不要用相近坐标伪造连接；
+            7a. 本应首尾相接的线段必须引用完全相同的点名，禁止用坐标接近但不相等的两个点表示同一交点；
             8. 同一直线上的点必须严格共线，例如 E 在 AD 上、H/F 在 BC 上时应使用相同的 y 坐标；竖线上的点应使用相同的 x 坐标；
             9. 如果题干说明垂直、角平分线、交于某点或连接某两点，必须优先满足这些拓扑关系，再微调坐标比例；
             10. 对矩形/平行四边形等基础图形，先定义外框点，再定义边上点、交点，最后用 Segment(已有点,已有点) 绘制全部可见线段；
@@ -324,12 +336,39 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
     private static string TrimForPrompt(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength] + "\n...（已截断）";
 
+    private static QuestionDocument CreateReviewSnapshot(QuestionDocument document)
+    {
+        var snapshot = new QuestionDocument
+        {
+            SchemaVersion = document.SchemaVersion,
+            Title = document.Title,
+            QuestionNumber = document.QuestionNumber,
+            Language = document.Language,
+            LatexSymbolMap = new Dictionary<string, string>(document.LatexSymbolMap),
+            Blocks = document.Blocks,
+            Figures = document.Figures
+                .Select(figure => new FigureDocument
+                {
+                    Id = figure.Id,
+                    Description = figure.Description,
+                    Svg = string.IsNullOrWhiteSpace(figure.Svg)
+                        ? string.Empty
+                        : $"[SVG 已省略，长度 {figure.Svg.Length} 字符]",
+                    GeoGebraCommands = figure.GeoGebraCommands.Take(40).ToList()
+                })
+                .ToList()
+        };
+        return snapshot;
+    }
+
     private async Task<T> RequestJsonAsync<T>(
         string sourcePath,
         string prompt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string imageDetail = "high",
+        int? maxImageSide = null)
     {
-        var dataUrl = await GetDataUrlAsync(sourcePath, cancellationToken);
+        var dataUrl = await GetDataUrlAsync(sourcePath, cancellationToken, maxImageSide);
         string content;
         try
         {
@@ -338,20 +377,20 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
                 try
                 {
                     content = await RequestResponsesTextAsync(
-                        CreateResponsesRequest(sourcePath, dataUrl, prompt),
+                        CreateResponsesRequest(sourcePath, dataUrl, prompt, imageDetail),
                         cancellationToken);
                 }
                 catch (ResponsesApiException exception) when (CanFallbackToChat(sourcePath, exception))
                 {
                     content = await RequestChatTextAsync(
-                        CreateChatRequest(sourcePath, dataUrl, prompt),
+                        CreateChatRequest(sourcePath, dataUrl, prompt, imageDetail),
                         cancellationToken);
                 }
             }
             else
             {
                 content = await RequestChatTextAsync(
-                    CreateChatRequest(sourcePath, dataUrl, prompt),
+                    CreateChatRequest(sourcePath, dataUrl, prompt, imageDetail),
                     cancellationToken);
             }
         }
@@ -388,11 +427,11 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         exception.AllowChatFallback &&
         !Path.GetExtension(sourcePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
 
-    private object CreateResponsesRequest(string sourcePath, string dataUrl, string prompt)
+    private object CreateResponsesRequest(string sourcePath, string dataUrl, string prompt, string imageDetail = "high")
     {
         object attachment = Path.GetExtension(sourcePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase)
-            ? new { type = "input_file", filename = Path.GetFileName(sourcePath), file_data = dataUrl, detail = "high" }
-            : new { type = "input_image", image_url = dataUrl, detail = "high" };
+            ? new { type = "input_file", filename = Path.GetFileName(sourcePath), file_data = dataUrl, detail = imageDetail }
+            : new { type = "input_image", image_url = dataUrl, detail = imageDetail };
         var input = new[]
         {
             new
@@ -479,7 +518,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         throw new ResponsesApiException("AI 流式响应中没有最终文本。", allowChatFallback: true);
     }
 
-    private object CreateChatRequest(string sourcePath, string dataUrl, string prompt)
+    private object CreateChatRequest(string sourcePath, string dataUrl, string prompt, string imageDetail = "high")
     {
         if (Path.GetExtension(sourcePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("当前兼容接口仅支持 PNG/JPG；PDF 需要支持 Responses API 的 OpenAI 提供商。");
@@ -495,7 +534,7 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
                     content = new object[]
                     {
                         new { type = "text", text = prompt },
-                        new { type = "image_url", image_url = new { url = dataUrl, detail = "high" } }
+                        new { type = "image_url", image_url = new { url = dataUrl, detail = imageDetail } }
                     }
                 }
             },
@@ -546,7 +585,10 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
         return path;
     }
 
-    private static async Task<string> GetDataUrlAsync(string path, CancellationToken cancellationToken)
+    private static async Task<string> GetDataUrlAsync(
+        string path,
+        CancellationToken cancellationToken,
+        int? maxImageSide = null)
     {
         var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
         var mediaType = Path.GetExtension(path).ToLowerInvariant() switch
@@ -556,7 +598,42 @@ public sealed class OpenAiProvider : IAiProvider, IDisposable
             ".pdf" => "application/pdf",
             _ => throw new NotSupportedException("仅支持 PNG、JPG 和 PDF 文件。")
         };
+        if (maxImageSide is > 0 && mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            var resized = TryResizeImage(path, maxImageSide.Value);
+            if (resized is not null)
+            {
+                bytes = resized;
+                mediaType = "image/jpeg";
+            }
+        }
         return $"data:{mediaType};base64,{Convert.ToBase64String(bytes)}";
+    }
+
+    private static byte[]? TryResizeImage(string path, int maxSide)
+    {
+        try
+        {
+            var decoder = BitmapDecoder.Create(
+                new Uri(path, UriKind.Absolute),
+                BitmapCreateOptions.PreservePixelFormat,
+                BitmapCacheOption.OnLoad);
+            var frame = decoder.Frames[0];
+            var longest = Math.Max(frame.PixelWidth, frame.PixelHeight);
+            if (longest <= maxSide) return null;
+
+            var scale = (double)maxSide / longest;
+            var resized = new TransformedBitmap(frame, new ScaleTransform(scale, scale));
+            var encoder = new JpegBitmapEncoder { QualityLevel = 82 };
+            encoder.Frames.Add(BitmapFrame.Create(resized));
+            using var stream = new MemoryStream();
+            encoder.Save(stream);
+            return stream.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string ExtractResponsesText(JsonElement payload)

@@ -85,7 +85,23 @@ internal static partial class MathTextFormatter
         ["sin"] = "sin", ["cos"] = "cos", ["tan"] = "tan", ["cot"] = "cot",
         ["sec"] = "sec", ["csc"] = "csc", ["arcsin"] = "arcsin", ["arccos"] = "arccos",
         ["arctan"] = "arctan", ["sinh"] = "sinh", ["cosh"] = "cosh", ["tanh"] = "tanh",
-        ["log"] = "log", ["ln"] = "ln", ["lg"] = "lg", ["lim"] = "lim", ["max"] = "max", ["min"] = "min"
+        ["csch"] = "csch", ["sech"] = "sech", ["coth"] = "coth",
+        ["exp"] = "exp", ["log"] = "log", ["ln"] = "ln", ["lg"] = "lg", ["lim"] = "lim",
+        ["mean"] = "mean", ["median"] = "median", ["min"] = "min", ["max"] = "max",
+        ["quartile"] = "quartile", ["quantile"] = "quantile", ["stdev"] = "stdev", ["stdevp"] = "stdevp",
+        ["var"] = "var", ["varp"] = "varp", ["cov"] = "cov", ["covp"] = "covp", ["mad"] = "mad",
+        ["corr"] = "corr", ["spearman"] = "spearman", ["stats"] = "stats", ["count"] = "count", ["total"] = "total",
+        ["normaldist"] = "normaldist", ["tdist"] = "tdist", ["chisqdist"] = "chisqdist",
+        ["uniformdist"] = "uniformdist", ["binomialdist"] = "binomialdist", ["poissondist"] = "poissondist",
+        ["geodist"] = "geodist", ["discretedist"] = "discretedist", ["pdf"] = "pdf", ["cdf"] = "cdf",
+        ["inversecdf"] = "inversecdf", ["random"] = "random",
+        ["ztest"] = "ztest", ["ttest"] = "ttest", ["zproptest"] = "zproptest", ["chisqtest"] = "chisqtest",
+        ["chisqgof"] = "chisqgof", ["pvalue"] = "p", ["pleft"] = "pleft", ["pright"] = "pright",
+        ["score"] = "score", ["dof"] = "dof", ["stderr"] = "stderr", ["conf"] = "conf",
+        ["lower"] = "lower", ["upper"] = "upper", ["estimate"] = "estimate",
+        ["polygon"] = "polygon", ["distance"] = "distance", ["midpoint"] = "midpoint",
+        ["lcm"] = "lcm", ["gcd"] = "gcd", ["mod"] = "mod", ["ceil"] = "ceil", ["floor"] = "floor",
+        ["round"] = "round", ["sign"] = "sign", ["nPr"] = "nPr", ["nCr"] = "nCr"
     };
 
     private static readonly HashSet<string> TransparentCommands = new(StringComparer.Ordinal)
@@ -100,7 +116,16 @@ internal static partial class MathTextFormatter
         "sqrt", "frac", "dfrac", "tfrac", "angle", "measuredangle", "triangle", "perp", "parallel",
         "le", "leq", "leqslant", "ge", "geq", "geqslant", "neq", "ne", "equiv", "approx", "sim",
         "times", "div", "cdot", "pm", "mp", "degree", "infty", "alpha", "beta", "gamma", "delta",
-        "epsilon", "theta", "lambda", "mu", "pi", "rho", "sigma", "phi", "omega"
+        "epsilon", "theta", "lambda", "mu", "pi", "rho", "sigma", "phi", "omega",
+        "sin", "cos", "tan", "csc", "sec", "cot", "arcsin", "arccos", "arctan",
+        "sinh", "cosh", "tanh", "csch", "sech", "coth", "exp", "ln", "log", "lg",
+        "int", "sum", "prod", "mean", "median", "quartile", "quantile", "stdev", "stdevp",
+        "var", "varp", "cov", "covp", "mad", "corr", "spearman", "stats", "count", "total",
+        "normaldist", "tdist", "chisqdist", "uniformdist", "binomialdist", "poissondist",
+        "geodist", "discretedist", "pdf", "cdf", "inversecdf", "random", "ztest", "ttest",
+        "zproptest", "chisqtest", "chisqgof", "pvalue", "pleft", "pright", "score", "dof",
+        "stderr", "conf", "lower", "upper", "estimate", "polygon", "distance", "midpoint",
+        "lcm", "gcd", "mod", "ceil", "floor", "round", "sign", "nPr", "nCr"
     };
 
     public static string ToDisplayText(

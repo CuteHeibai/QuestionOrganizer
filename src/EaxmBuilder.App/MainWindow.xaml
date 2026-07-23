@@ -7,7 +7,7 @@
         Title="题目整理" Width="1180" Height="760" MinWidth="980" MinHeight="640"
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
         Background="{StaticResource PageBrush}" Foreground="{StaticResource TextBrush}"
-        Loaded="Window_Loaded" PreviewKeyDown="Window_PreviewKeyDown">
+        Loaded="Window_Loaded" StateChanged="Window_StateChanged" PreviewKeyDown="Window_PreviewKeyDown">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" />
     </shell:WindowChrome.WindowChrome>
@@ -360,51 +360,103 @@
                                             <TextBlock Text="项目" FontSize="26" FontWeight="SemiBold" />
                                             <TextBlock Text="继续处理以前的题目" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,0" />
                                         </StackPanel>
-                                        <Button Style="{StaticResource IconButton}" ToolTip="刷新项目"
-                                                AutomationProperties.Name="刷新项目" HorizontalAlignment="Right"
-                                                VerticalAlignment="Center" Click="RefreshProjects_Click">
-                                            <controls:FluentIcon Kind="Refresh" Width="16" Height="16" />
-                                        </Button>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource SecondaryButton}" Content="删除选中"
+                                                    Padding="12,7" FontSize="12" Margin="0,0,8,0"
+                                                    Click="DeleteSelectedProjects_Click" />
+                                            <Button Style="{StaticResource IconButton}" ToolTip="刷新项目"
+                                                    AutomationProperties.Name="刷新项目" Click="RefreshProjects_Click">
+                                                <controls:FluentIcon Kind="Refresh" Width="16" Height="16" />
+                                            </Button>
+                                        </StackPanel>
                                     </Grid>
                                     <TextBlock x:Name="NoProjectsText" Text="还没有项目" FontSize="13"
                                                Foreground="{StaticResource MutedBrush}" Margin="12,18,0,0" />
-                                    <ItemsControl x:Name="AllProjectsList">
-                                        <ItemsControl.ItemTemplate>
+                                    <ListBox x:Name="AllProjectsList" BorderThickness="0" Background="Transparent"
+                                             SelectionMode="Extended">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="Background" Value="Transparent" />
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                            <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="6">
+                                                                <ContentPresenter />
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsSelected" Value="True">
+                                                                    <Setter TargetName="Root" Property="Background" Value="#F4F4F4" />
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
                                             <DataTemplate>
                                                 <Border BorderBrush="#EEEEEE" BorderThickness="0,0,0,1">
-                                                    <Button Style="{StaticResource ProjectRowButton}" Height="68"
-                                                            Tag="{Binding}" AutomationProperties.Name="{Binding Name}"
-                                                            Click="AllProject_Click">
-                                                        <Grid>
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="42" />
-                                                                <ColumnDefinition Width="*" />
-                                                                <ColumnDefinition Width="Auto" />
-                                                                <ColumnDefinition Width="28" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <controls:FluentIcon Kind="Document" Width="18" Height="18"
-                                                                                 VerticalAlignment="Center" />
-                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
-                                                                           TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock Text="{Binding DirectoryPath}" FontSize="11"
-                                                                           Foreground="{StaticResource MutedBrush}"
-                                                                           TextTrimming="CharacterEllipsis" Margin="0,4,18,0" />
-                                                            </StackPanel>
-                                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                                                <TextBlock Text="{Binding StatusText}" FontSize="12" HorizontalAlignment="Right" />
-                                                                <TextBlock Text="{Binding UpdatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm}}" FontSize="11"
-                                                                           Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" />
-                                                            </StackPanel>
-                                                            <controls:FluentIcon Grid.Column="3" Kind="ArrowRight" Width="14" Height="14"
-                                                                                 Foreground="{StaticResource MutedBrush}"
-                                                                                 HorizontalAlignment="Right" VerticalAlignment="Center" />
-                                                        </Grid>
-                                                    </Button>
+                                                    <Grid Height="68" Margin="0,0,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Button Style="{StaticResource ProjectRowButton}"
+                                                                Tag="{Binding}" AutomationProperties.Name="{Binding Name}"
+                                                                Click="AllProject_Click">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="42" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="24" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <controls:FluentIcon Kind="Document" Width="18" Height="18"
+                                                                                     VerticalAlignment="Center" />
+                                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Text="{Binding DirectoryPath}" FontSize="11"
+                                                                               Foreground="{StaticResource MutedBrush}"
+                                                                               TextTrimming="CharacterEllipsis" Margin="0,4,18,0" />
+                                                                </StackPanel>
+                                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                                    <TextBlock Text="{Binding StatusText}" FontSize="12" HorizontalAlignment="Right" />
+                                                                    <TextBlock Text="{Binding UpdatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm}}" FontSize="11"
+                                                                               Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" />
+                                                                </StackPanel>
+                                                                <controls:FluentIcon Grid.Column="3" Kind="ArrowRight" Width="14" Height="14"
+                                                                                     Foreground="{StaticResource MutedBrush}"
+                                                                                     HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                                            </Grid>
+                                                        </Button>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                                                            <Button Style="{StaticResource IconButton}" Width="34" Height="34"
+                                                                    ToolTip="打开项目文件夹" Tag="{Binding}"
+                                                                    Background="{StaticResource ButtonBrush}"
+                                                                    Click="OpenProjectFolderFromList_Click">
+                                                                <controls:FluentIcon Kind="FolderOpen" Width="15" Height="15" />
+                                                            </Button>
+                                                            <Button Style="{StaticResource IconButton}" Width="34" Height="34"
+                                                                    ToolTip="改名项目" Tag="{Binding}" Margin="6,0,0,0"
+                                                                    Background="{StaticResource ButtonBrush}"
+                                                                    Click="RenameProject_Click">
+                                                                <controls:FluentIcon Kind="Edit" Width="15" Height="15" />
+                                                            </Button>
+                                                            <Button Style="{StaticResource IconButton}" Width="34" Height="34"
+                                                                    ToolTip="删除项目" Tag="{Binding}" Margin="6,0,0,0"
+                                                                    Background="{StaticResource ButtonBrush}"
+                                                                    Click="DeleteProject_Click">
+                                                                <controls:FluentIcon Kind="Delete" Width="15" Height="15" />
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </Grid>
                                                 </Border>
                                             </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>
@@ -424,10 +476,6 @@
                                     <TextBlock x:Name="ProjectPath" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button Style="{StaticResource IconButton}" ToolTip="打开项目文件夹"
-                                            Margin="0,0,8,0" Click="OpenProjectFolder_Click">
-                                        <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
-                                    </Button>
                                     <Button Style="{StaticResource IconButton}" ToolTip="打开最终输出文件夹"
                                             Margin="0,0,8,0" Click="OpenFinalOutputFolder_Click">
                                         <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
@@ -685,27 +733,48 @@
                                     <TextBlock Text="Base URL" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
                                     <TextBox x:Name="SettingsBaseUrlBox" Style="{StaticResource Field}" />
                                     <TextBlock Text="模型" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
-                                    <ComboBox x:Name="SettingsModelBox" Style="{StaticResource ModernComboBox}" IsEditable="True"
-                                              IsTextSearchEnabled="False" StaysOpenOnEdit="True" />
-                                    <TextBlock x:Name="SettingsModelHintText" FontSize="11" Foreground="{StaticResource MutedBrush}"
-                                               Margin="0,7,0,0" TextWrapping="Wrap" />
+                                     <ComboBox x:Name="SettingsModelBox" Style="{StaticResource ModernComboBox}" IsEditable="True"
+                                               IsTextSearchEnabled="False" StaysOpenOnEdit="True" />
+                                     <TextBlock x:Name="SettingsModelHintText" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                Margin="0,7,0,0" TextWrapping="Wrap" />
+                                     <Grid Margin="0,16,0,0">
+                                         <TextBlock x:Name="SettingsFeedback" FontSize="12" VerticalAlignment="Center" />
+                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                             <Button Style="{StaticResource SecondaryButton}" Content="测试连接" Margin="0,0,10,0"
+                                                     Click="SettingsTestConnection_Click" />
+                                             <Button Style="{StaticResource PrimaryButton}" Content="保存 AI 设置" Click="SaveSettings_Click" />
+                                         </StackPanel>
+                                     </Grid>
 
-                                    <Separator Margin="0,34" Background="#EEEEEE" />
-                                    <TextBlock Text="文件" FontSize="16" FontWeight="SemiBold" />
-                                    <TextBlock Text="默认输出目录" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
-                                    <Grid>
-                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
-                                        <TextBox x:Name="OutputDirectoryBox" Style="{StaticResource Field}"
+                                     <Separator Margin="0,34" Background="#EEEEEE" />
+                                     <TextBlock Text="文件" FontSize="16" FontWeight="SemiBold" />
+                                     <TextBlock Text="项目保存目录" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                     <Grid>
+                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                                         <TextBox x:Name="OutputDirectoryBox" Style="{StaticResource Field}"
                                                  LostKeyboardFocus="CommonSettings_LostKeyboardFocus"
                                                  KeyDown="CommonSettings_KeyDown" />
                                         <Button Grid.Column="2" Style="{StaticResource IconButton}" ToolTip="选择目录"
                                                 Background="{StaticResource ButtonBrush}" Click="ChooseOutputDirectory_Click">
                                             <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
                                         </Button>
-                                    </Grid>
-                                    <TextBlock Text="新项目的最终结果默认保存到：默认输出目录\最终输出\项目名"
-                                               FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" />
-                                    <TextBlock Text="Word 模板" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                     </Grid>
+                                     <TextBlock Text="新项目的工程文件会保存在这里；不会和最终导出的 Word/PDF 混在一起"
+                                                FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" />
+                                     <TextBlock Text="默认最终输出目录" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
+                                     <Grid>
+                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                                         <TextBox x:Name="FinalOutputDirectoryBox" Style="{StaticResource Field}"
+                                                  LostKeyboardFocus="CommonSettings_LostKeyboardFocus"
+                                                  KeyDown="CommonSettings_KeyDown" />
+                                         <Button Grid.Column="2" Style="{StaticResource IconButton}" ToolTip="选择最终输出目录"
+                                                 Background="{StaticResource ButtonBrush}" Click="ChooseFinalOutputDirectory_Click">
+                                             <controls:FluentIcon Kind="FolderOpen" Width="17" Height="17" />
+                                         </Button>
+                                     </Grid>
+                                     <TextBlock Text="新项目的最终结果默认保存到：默认最终输出目录\项目名；单个项目仍可在处理页覆盖"
+                                                FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                     <TextBlock Text="Word 模板" Style="{StaticResource LabelText}" Margin="0,18,0,7" />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="10" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
                                         <TextBox x:Name="WordTemplateBox" Style="{StaticResource Field}"
@@ -728,17 +797,9 @@
                                         <ComboBoxItem Content="深色（即将支持）" IsEnabled="False" />
                                     </ComboBox>
 
-                                    <Grid Margin="0,30,0,0">
-                                        <TextBlock x:Name="SettingsFeedback" FontSize="12" VerticalAlignment="Center" />
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                            <Button Style="{StaticResource SecondaryButton}" Content="测试连接" Margin="0,0,10,0"
-                                                    Click="SettingsTestConnection_Click" />
-                                            <Button Style="{StaticResource PrimaryButton}" Content="保存 AI 设置" Click="SaveSettings_Click" />
-                                        </StackPanel>
-                                    </Grid>
-                                </StackPanel>
-                            </ScrollViewer>
-                        </Grid>
+                                 </StackPanel>
+                             </ScrollViewer>
+                         </Grid>
 
                         <Grid x:Name="AboutPage" Visibility="Collapsed" Opacity="0">
                             <StackPanel Width="520" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -747,7 +808,7 @@
                                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
                                 <TextBlock Text="题目整理" FontSize="28" FontWeight="SemiBold" Margin="0,24,0,8" />
-                                <TextBlock Text="版本 1.0.0" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                                <TextBlock x:Name="AboutVersionText" Text="版本" FontSize="12" Foreground="{StaticResource MutedBrush}" />
                                 <TextBlock Text="利用 AI 自动整理数学题目的 Windows 桌面软件。"
                                            FontSize="14" Margin="0,24,0,24" />
                                 <Button Style="{StaticResource SecondaryButton}" Content="检查更新" HorizontalAlignment="Left"
@@ -833,6 +894,40 @@
                                         Click="CancelAiInstructions_Click" />
                                 <Button Style="{StaticResource PrimaryButton}" Content="保存要求"
                                         Click="SaveAiInstructions_Click" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="RenameProjectOverlay" Visibility="Collapsed" Background="#59000000" Panel.ZIndex="25">
+                    <Border Width="440" MaxWidth="640" Margin="24" Padding="26,24" Background="#FFFFFF"
+                            BorderBrush="#DADADA" BorderThickness="1" CornerRadius="8"
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <TextBlock Text="改名项目" FontSize="18" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Style="{StaticResource IconButton}" HorizontalAlignment="Right"
+                                        ToolTip="关闭" Click="CancelRenameProject_Click">
+                                    <controls:FluentIcon Kind="Dismiss" Width="15" Height="15" />
+                                </Button>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Text="只修改项目显示名称，不移动项目文件夹，也不会影响已经导出的文件。"
+                                       Foreground="{StaticResource MutedBrush}" LineHeight="22" Margin="0,18,0,12"
+                                       TextWrapping="Wrap" />
+                            <TextBox x:Name="RenameProjectNameBox" Grid.Row="2" Style="{StaticResource Field}"
+                                     Height="38" KeyDown="RenameProjectNameBox_KeyDown" />
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                                <Button Style="{StaticResource SecondaryButton}" Content="取消" Margin="0,0,10,0"
+                                        Click="CancelRenameProject_Click" />
+                                <Button Style="{StaticResource PrimaryButton}" Content="保存名称"
+                                        Click="SaveRenameProject_Click" />
                             </StackPanel>
                         </Grid>
                     </Border>

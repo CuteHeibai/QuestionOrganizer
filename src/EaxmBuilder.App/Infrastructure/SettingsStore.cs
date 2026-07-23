@@ -27,6 +27,7 @@ public sealed class SettingsStore
             var settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions)
                            ?? new AppSettings();
             MigrateProviderProfile(settings);
+            MigrateOutputDirectories(settings);
             return settings;
         }
         catch (JsonException)
@@ -75,5 +76,13 @@ public sealed class SettingsStore
             BaseUrl = settings.BaseUrl,
             Model = settings.Model
         };
+    }
+
+    private static void MigrateOutputDirectories(AppSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.OutputDirectory))
+            settings.OutputDirectory = new AppSettings().OutputDirectory;
+        if (string.IsNullOrWhiteSpace(settings.FinalOutputDirectory))
+            settings.FinalOutputDirectory = Path.Combine(settings.OutputDirectory, "最终输出");
     }
 }

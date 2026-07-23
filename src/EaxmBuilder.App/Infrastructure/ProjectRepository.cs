@@ -12,7 +12,7 @@ public sealed class ProjectRepository
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public async Task<QuestionProject> CreateAsync(string sourcePath, string outputRoot)
+    public async Task<QuestionProject> CreateAsync(string sourcePath, string outputRoot, string? finalOutputRoot = null)
     {
         Directory.CreateDirectory(outputRoot);
         var baseName = SanitizeFileName(Path.GetFileNameWithoutExtension(sourcePath));
@@ -31,11 +31,34 @@ public sealed class ProjectRepository
             OutputSelection =
             {
                 FileName = baseName,
-                OutputDirectory = Path.Combine(outputRoot, "最终输出", Path.GetFileName(directory))
+                OutputDirectory = Path.Combine(
+                    string.IsNullOrWhiteSpace(finalOutputRoot) ? Path.Combine(outputRoot, "最终输出") : finalOutputRoot,
+                    Path.GetFileName(directory))
             }
         };
         await SaveAsync(project);
         return project;
+    }
+
+    public async Task RenameAsync(QuestionProject project, string newName)
+    {
+        var safeName = SanitizeFileName(newName);
+        if (string.IsNullOrWhiteSpace(safeName))
+            throw new InvalidOperationException("项目名称不能为空。");
+        project.Name = safeName;
+        if (string.IsNullOrWhiteSpace(project.OutputSelection.FileName))
+            project.OutputSelection.FileName = safeName;
+        await SaveAsync(project);
+    }
+
+    public Task DeleteAsync(QuestionProject project)
+    {
+        if (!Directory.Exists(project.DirectoryPath)) return Task.CompletedTask;
+        Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+            project.DirectoryPath,
+            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+        return Task.CompletedTask;
     }
 
     public async Task SaveAsync(QuestionProject project)

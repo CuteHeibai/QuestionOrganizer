@@ -273,7 +273,29 @@ internal static class GeoGebraRenderer
                 progress = true;
             }
         }
+        SnapNearbyNamedPoints(points);
         return points;
+    }
+
+    private static void SnapNearbyNamedPoints(Dictionary<string, PointCoordinate> points)
+    {
+        var names = points.Keys.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+        for (var i = 0; i < names.Length; i++)
+        {
+            var anchor = points[names[i]];
+            for (var j = i + 1; j < names.Length; j++)
+            {
+                var candidate = points[names[j]];
+                if (DistanceSquared(anchor, candidate.X, candidate.Y) >
+                    PointSnapTolerance * PointSnapTolerance) continue;
+                var merged = new PointCoordinate(
+                    (anchor.X + candidate.X) / 2,
+                    (anchor.Y + candidate.Y) / 2);
+                points[names[i]] = merged;
+                points[names[j]] = merged;
+                anchor = merged;
+            }
+        }
     }
 
     private static bool TryIntersect(

@@ -82,12 +82,12 @@ public static class HtmlRenderer
             @page{size:A4;margin:25.4mm 31.8mm}body{font-family:"SimSun","宋体",serif;font-size:10.5pt;line-height:2;color:#111}
             p{margin:0}.formula,math{font-family:"Cambria Math","Times New Roman",serif}
             math{font-size:1em} mfrac{font-size:.95em}
-            svg{display:block;max-width:58%;height:auto;margin:8pt auto}
-            .prompt-row{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:10pt;align-items:center}
-            .target-figure svg{max-width:108px;margin:0 auto}
+            svg{display:block;max-width:48%;height:auto;margin:7pt auto}
+            .prompt-row{display:grid;grid-template-columns:minmax(0,1fr) 100px;gap:10pt;align-items:center}
+            .target-figure svg{max-width:96px;margin:0 auto}
             .choices{display:grid;grid-template-columns:repeat(4,1fr);gap:8pt;margin-top:18pt;align-items:start}
             .choice{break-inside:avoid}.choice-label{font-weight:600;line-height:1.4;margin-bottom:3pt}
-            .choice svg{max-width:92%;margin:0 auto}
+            .choice svg{max-width:82%;margin:0 auto}
             </style></head><body>{{body}}</body></html>
             """;
     }

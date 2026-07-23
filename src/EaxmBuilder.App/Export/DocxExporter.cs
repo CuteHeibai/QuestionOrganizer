@@ -22,7 +22,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
     private static readonly XNamespace A = "http://schemas.openxmlformats.org/drawingml/2006/main";
     private static readonly XNamespace Pic = "http://schemas.openxmlformats.org/drawingml/2006/picture";
     private static readonly Regex InlineLatexPattern = new(
-        @"\$[^$]+\$|\\\([^)]+\\\)|[A-Za-z0-9_{}^()+\-*/=,.\s]{0,24}\\(?:sqrt|frac|dfrac|tfrac|angle|triangle|perp|parallel|overline|mathrm|mathbf|mathit|sin|cos|tan|cdot|times|leq?|geq?|neq)[^，。；;：:\r\n]*",
+        @"\$[^$]+\$|\\\([^)]+\\\)|[A-Za-z0-9_{}^()+\-*/=,.\s]{0,24}\\(?:sqrt|frac|dfrac|tfrac|angle|triangle|perp|parallel|overline|mathrm|mathbf|mathit|sin|cos|tan|csc|sec|cot|arcsin|arccos|arctan|sinh|cosh|tanh|csch|sech|coth|exp|ln|log|lg|int|sum|prod|cdot|times|leq?|geq?|neq|mean|median|quartile|quantile|stdevp?|varp?|covp?|mad|corr|spearman|stats|count|total|normaldist|tdist|chisqdist|uniformdist|binomialdist|poissondist|geodist|discretedist|pdf|cdf|inversecdf|random|ztest|ttest|zproptest|chisqtest|chisqgof|pvalue|pleft|pright|score|dof|stderr|conf|lower|upper|estimate|polygon|distance|midpoint|lcm|gcd|mod|ceil|floor|round|sign|nPr|nCr)[^，。；;：:\r\n]*",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public TaskStep Step => TaskStep.WordExport;
@@ -269,7 +269,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 new XAttribute("Id", relationshipId),
                 new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"),
                 new XAttribute("Target", $"media/{fileName}")));
-            var widthEmu = 4_663_440L;
+            var widthEmu = 3_840_480L;
             var heightEmu = Math.Max(457_200L,
                 (long)(widthEmu * (double)renderedFigure.PixelHeight / renderedFigure.PixelWidth));
             assets[renderedFigure.Id] = new FigureAsset(
@@ -351,8 +351,8 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                     var hasImageChoices = Enumerable.Range(index + 1, document.Blocks.Count - index - 1)
                         .Any(candidate => IsChoicePair(document.Blocks, candidate));
                     body.Add(CreateImageParagraph(asset,
-                        hasImageChoices ? 1_828_800L : 4_343_400L,
-                        hasImageChoices ? 1_645_920L : 3_200_400L));
+                        hasImageChoices ? 1_554_480L : 3_657_600L,
+                        hasImageChoices ? 1_371_600L : 2_743_200L));
                     break;
             }
         }
@@ -400,7 +400,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
             new XElement(W + "tcPr",
                 new XElement(W + "tcW", new XAttribute(W + "w", figureWidth), new XAttribute(W + "type", "dxa")),
                 new XElement(W + "vAlign", new XAttribute(W + "val", "center"))),
-            CreateImageParagraph(targetAsset, 1_554_480L, 1_463_040L));
+            CreateImageParagraph(targetAsset, 1_280_160L, 1_188_720L));
         return new XElement(W + "tbl",
             new XElement(W + "tblPr",
                 new XElement(W + "tblW", new XAttribute(W + "w", totalWidth), new XAttribute(W + "type", "dxa")),
@@ -457,7 +457,7 @@ public sealed class DocxExporter(WordExportOptions? options = null) : IQuestionE
                 {
                     var choice = choices[choiceIndex];
                     cell.Add(CreateCompactLabel(choice.Label));
-                    cell.Add(CreateImageParagraph(choice.Asset, 1_097_280L, 1_280_160L));
+                    cell.Add(CreateImageParagraph(choice.Asset, 914_400L, 1_097_280L));
                 }
                 else
                 {

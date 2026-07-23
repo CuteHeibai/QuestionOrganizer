@@ -434,13 +434,13 @@ public sealed class ProcessingTaskManager(
 
         if (expectedCount == 1 && components.Length > 1)
         {
-            var union = new ComponentBounds(
-                components.Min(component => component.X),
-                components.Min(component => component.Y),
-                components.Max(component => component.X + component.Width) - components.Min(component => component.X),
-                components.Max(component => component.Y + component.Height) - components.Min(component => component.Y),
-                components.Sum(component => component.Area));
-            components = [union];
+            components =
+            [
+                components
+                    .OrderByDescending(component => component.Area)
+                    .ThenByDescending(component => component.Y)
+                    .First()
+            ];
         }
         else
         {
@@ -690,7 +690,9 @@ public sealed class ProcessingTaskManager(
         if (Directory.Exists(finalDirectory))
         {
             foreach (var path in Directory.EnumerateFiles(finalDirectory, baseName + "-*.svg").Take(12))
-                result[Path.GetFileName(path)] = await File.ReadAllTextAsync(path, cancellationToken);
+                result[Path.GetFileName(path)] = SummarizeSvgForReview(
+                    await File.ReadAllTextAsync(path, cancellationToken),
+                    new FileInfo(path).Length);
         }
 
         foreach (var finalFile in new[]
@@ -703,6 +705,17 @@ public sealed class ProcessingTaskManager(
                 result[finalFile.Name] = $"文件存在，大小 {new FileInfo(finalFile.Path).Length} 字节。";
         }
         return result;
+    }
+
+    private static string SummarizeSvgForReview(string svg, long byteLength)
+    {
+        var hasEmbeddedImage = svg.Contains("<image", StringComparison.OrdinalIgnoreCase) ||
+                               svg.Contains("data:image", StringComparison.OrdinalIgnoreCase);
+        if (hasEmbeddedImage)
+            return $"SVG 文件存在，大小 {byteLength} 字节，包含嵌入裁剪图片；为避免 AI 上下文过大已省略正文。";
+        return svg.Length <= 4_000
+            ? svg
+            : svg[..4_000] + "\n...（SVG 已截断）";
     }
 
     private async Task<T> RequireDataAsync<T>(QuestionProject project, string fileName)
