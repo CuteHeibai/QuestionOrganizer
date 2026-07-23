@@ -16,6 +16,7 @@ src/EaxmBuilder.App/Assets/GeoGebra/
 *.sln.docstates
 
 # Codex / agent-local context that may contain private state
+AGENTS.md
 .agents/
 .codex/
 
